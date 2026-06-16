@@ -1,0 +1,584 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Transfers &amp; Queueing · slskd Protocol &amp; Model Specification</title>
+<meta name="description" content="slskd / Soulseek network, protocol and data-model specification — Transfers &amp; Queueing. A language-agnostic reference for building clients, apps and services that interoperate with the Soulseek platform.">
+<link rel="stylesheet" href="style.css">
+<script>(function(){try{var t=localStorage.getItem('slskd-spec-theme');if(t){document.documentElement.setAttribute('data-theme',t);}else if(window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches){document.documentElement.setAttribute('data-theme','dark');}}catch(e){}})();</script>
+</head>
+<body>
+<div class="scrim"></div>
+<div class="layout">
+<aside class="sidebar">
+  <div class="brand">
+    <div class="logo">sd</div>
+    <div class="brand-text">
+      <span class="brand-title">slskd Spec</span>
+      <span class="brand-sub">Soulseek protocol &amp; model</span>
+    </div>
+  </div>
+  <div class="nav-filter-wrap"><input class="nav-filter" type="text" placeholder="Filter pages…" aria-label="Filter pages"></div>
+  <nav>
+  <div class="nav-group-label">Introduction</div>
+  <ul>
+    <li><a href="index.html"><span class="nav-num">1</span><span>Overview</span></a></li>
+    <li><a href="architecture.html"><span class="nav-num">2</span><span>Architecture &amp; Concepts</span></a></li>
+  </ul>
+  <div class="nav-group-label">The Soulseek Network</div>
+  <ul>
+    <li><a href="soulseek-protocol.html"><span class="nav-num">3</span><span>Soulseek Wire Protocol</span></a></li>
+    <li><a href="data-model.html"><span class="nav-num">4</span><span>Data Model &amp; Types</span></a></li>
+  </ul>
+  <div class="nav-group-label">Domains</div>
+  <ul>
+    <li><a href="search.html"><span class="nav-num">5</span><span>Search</span></a></li>
+    <li class="active"><a href="transfers.html" aria-current="page"><span class="nav-num">6</span><span>Transfers &amp; Queueing</span></a></li>
+    <li><a href="users-rooms.html"><span class="nav-num">7</span><span>Users, Rooms &amp; Chat</span></a></li>
+    <li><a href="shares.html"><span class="nav-num">8</span><span>Shares &amp; Browsing</span></a></li>
+  </ul>
+  <div class="nav-group-label">Integration</div>
+  <ul>
+    <li><a href="authentication.html"><span class="nav-num">9</span><span>Authentication &amp; Security</span></a></li>
+    <li><a href="rest-api.html"><span class="nav-num">10</span><span>REST API Reference</span></a></li>
+    <li><a href="realtime-api.html"><span class="nav-num">11</span><span>Real-Time API &amp; Events</span></a></li>
+    <li><a href="relay.html"><span class="nav-num">12</span><span>Relay Protocol</span></a></li>
+  </ul>
+</nav>
+</aside>
+<div class="main-col">
+  <header class="topbar">
+    <button class="menu-btn" aria-label="Toggle navigation">&#9776;</button>
+    <span class="crumb">Domains / <b>Transfers &amp; Queueing</b></span>
+    <span class="spacer"></span>
+    <a class="tb-link" href="index.html#sitemap">Contents</a>
+    <a class="tb-link" href="https://github.com/slskd/slskd" target="_blank" rel="noopener">GitHub</a>
+    <button class="theme-toggle" aria-label="Toggle dark mode" title="Toggle theme">◐</button>
+  </header>
+  <main class="content">
+
+<h1>Transfers &amp; Queueing</h1>
+<p class="page-lede">A transfer is a single file moving between two Soulseek peers. slskd models every download and upload as a <code>Transfer</code> with a flag-based state machine, persists them, and exposes them through the <code>/api/v0/transfers</code> REST surface. This page documents the transfer entity, the <code>TransferStates</code> state machine and its categories, the download enqueue/batch/query/cancel flow, the upload queue (groups, slots, priorities and queue strategies), the placement and conflict strategies, and the underlying wire-level negotiation that all of this drives.</p>
+
+<nav class="toc"><div class="toc-title">On this page</div><ul>
+  <li><a href="#entity">The Transfer entity</a></li>
+  <li><a href="#state-machine">Transfer state machine</a></li>
+  <li><a href="#categories">State categories</a></li>
+  <li><a href="#place-in-queue">Place in queue &amp; remote queueing</a></li>
+  <li><a href="#download-flow">Download flow</a></li>
+  <li><a href="#download-endpoints">Download endpoints</a></li>
+  <li><a href="#batches">Download batches</a></li>
+  <li><a href="#upload-flow">Upload flow &amp; the queue</a></li>
+  <li><a href="#groups">Upload groups, slots &amp; priorities</a></li>
+  <li><a href="#upload-endpoints">Upload endpoints</a></li>
+  <li><a href="#strategies">Strategies &amp; placement</a></li>
+  <li><a href="#options">Relevant options</a></li>
+  <li><a href="#wire">Wire-level negotiation</a></li>
+</ul></nav>
+
+<h2 id="entity">The Transfer entity</h2>
+<p>Every download and upload is a single <code>Transfer</code> record. The same class serves both directions; the <code>direction</code> field distinguishes them. Downloads and uploads are stored and queried separately (different services and tables) but share this shape. The DTO is serialized as camelCase JSON.</p>
+
+<div class="table-wrap"><table>
+<thead><tr><th>Field</th><th>Type</th><th>Direction</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>id</code></td><td><span class="type">Guid</span></td><td>both</td><td>Unique identifier for the transfer (the API key for all per-transfer routes).</td></tr>
+<tr><td><code>batchId</code></td><td><span class="type">Guid?</span></td><td>download</td><td>Associated <a href="#batches">Batch</a> id, if one was supplied or generated at enqueue time. <code>null</code> otherwise.</td></tr>
+<tr><td><code>username</code></td><td><span class="type">string</span></td><td>both</td><td>Remote peer: the source for downloads, the destination for uploads.</td></tr>
+<tr><td><code>direction</code></td><td><span class="type">enum</span></td><td>both</td><td><code>Download</code> or <code>Upload</code> (Soulseek.NET <code>TransferDirection</code>). Serialized as the string name.</td></tr>
+<tr><td><code>filename</code></td><td><span class="type">string</span></td><td>both</td><td>Remote filename, <em>exactly</em> as it appeared in the originating search, browse, or directory-contents response (remote path separators, remote casing). This string is the wire key; do not normalize it before enqueueing.</td></tr>
+<tr><td><code>size</code></td><td><span class="type">int64</span></td><td>both</td><td>Remote file size in bytes.</td></tr>
+<tr><td><code>state</code></td><td><span class="type">flags enum</span></td><td>both</td><td>Current <a href="#state-machine"><code>TransferStates</code></a>. Serialized as a comma-joined string, e.g. <code>"Completed, Succeeded"</code>.</td></tr>
+<tr><td><code>requestedAt</code></td><td><span class="type">DateTime</span></td><td>both</td><td>When the transfer was requested from the remote peer.</td></tr>
+<tr><td><code>enqueuedAt</code></td><td><span class="type">DateTime?</span></td><td>both</td><td>Downloads: when the remote peer accepted our enqueue request. Uploads: when the file became available for scheduling by the upload queue (after we accepted the peer's request). <code>null</code> until enqueued.</td></tr>
+<tr><td><code>startedAt</code></td><td><span class="type">DateTime?</span></td><td>both</td><td>When the data connection was established and bytes began to move. <code>null</code> until started.</td></tr>
+<tr><td><code>endedAt</code></td><td><span class="type">DateTime?</span></td><td>both</td><td>When the transfer reached a terminal state. Guaranteed set for any state in the <a href="#categories">Completed</a> category.</td></tr>
+<tr><td><code>bytesTransferred</code></td><td><span class="type">int64</span></td><td>both</td><td>Bytes moved so far.</td></tr>
+<tr><td><code>averageSpeed</code></td><td><span class="type">double</span></td><td>both</td><td>Average speed over the duration, in bytes/second.</td></tr>
+<tr><td><code>placeInQueue</code></td><td><span class="type">int32?</span></td><td>download</td><td>Last-known place in the remote peer's queue, if requested. <code>null</code> until a <a href="#place-in-queue">position request</a> succeeds. Per the source: "may be wildly inaccurate to the point of uselessness."</td></tr>
+<tr><td><code>exception</code></td><td><span class="type">string</span></td><td>both</td><td>Failure message if the transfer did not end successfully; <code>null</code> otherwise.</td></tr>
+<tr><td><code>attempts</code></td><td><span class="type">int32</span></td><td>download</td><td>Number of attempts; incremented on each retry. Downloads only.</td></tr>
+<tr><td><code>nextAttemptAt</code></td><td><span class="type">DateTime?</span></td><td>download</td><td>When the next retry will be attempted, if applicable.</td></tr>
+<tr><td><code>removed</code></td><td><span class="type">bool</span></td><td>both</td><td>Whether the transfer was removed from the UI/list. Removed records are excluded from list queries unless <code>includeRemoved=true</code>.</td></tr>
+</tbody>
+</table></div>
+
+<p>The following are <code>[NotMapped]</code> computed properties — they are serialized into the DTO but are not stored and are recomputed on read:</p>
+
+<div class="table-wrap"><table>
+<thead><tr><th>Field</th><th>Type</th><th>Computed as</th></tr></thead>
+<tbody>
+<tr><td><code>bytesRemaining</code></td><td><span class="type">int64</span></td><td><code>size - bytesTransferred</code></td></tr>
+<tr><td><code>percentComplete</code></td><td><span class="type">double</span></td><td><code>size == 0 ? 0 : (bytesTransferred / size) * 100</code></td></tr>
+<tr><td><code>elapsedTime</code></td><td><span class="type">TimeSpan?</span></td><td><code>null</code> if not started, else <code>(endedAt ?? now) - startedAt</code></td></tr>
+<tr><td><code>remainingTime</code></td><td><span class="type">TimeSpan?</span></td><td><code>null</code> if <code>averageSpeed == 0</code>, else <code>bytesRemaining / averageSpeed</code> seconds</td></tr>
+</tbody>
+</table></div>
+
+<div class="note callout"><span class="label">Note</span><p>There is <strong>no <code>startOffset</code> field on the <code>Transfer</code> DTO</strong>. Resume offset is an internal value derived at download time from the size of the on-disk partial file (see <a href="#strategies">RetryPartialStrategy</a>) and carried on the wire as the 8-byte file offset (see <a href="#wire">Wire-level negotiation</a>); it is not surfaced as a persisted property.</p></div>
+<p class="src-ref">Source: src/slskd/Transfers/Types/Transfer.cs · src/web/src/components/Transfers/TransferList.jsx</p>
+
+<h2 id="state-machine">Transfer state machine</h2>
+<p><code>state</code> is a <strong>bit-flag enum</strong> (Soulseek.NET <code>TransferStates</code>). A live state is usually a composition of a coarse phase flag and a refinement flag, e.g. <code>Queued | Locally</code> or <code>Completed | Succeeded</code>. The integer values below are taken verbatim from the bit arithmetic documented in slskd's <code>TransferStateCategories</code> source.</p>
+
+<div class="table-wrap"><table>
+<thead><tr><th>Flag</th><th>Value</th><th>Kind</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>None</code></td><td><span class="type">0</span></td><td>initial</td><td>No state. Default value of a freshly constructed record before scheduling.</td></tr>
+<tr><td><code>Requested</code></td><td><span class="type">1</span></td><td>phase</td><td>The transfer has been requested from the remote peer; we optimistically assume it will be allowed to enqueue.</td></tr>
+<tr><td><code>Queued</code></td><td><span class="type">2</span></td><td>phase</td><td>The transfer is queued (waiting for a slot). Usually carries a <code>Locally</code> or <code>Remotely</code> refinement.</td></tr>
+<tr><td><code>Initializing</code></td><td><span class="type">4</span></td><td>phase</td><td>The data connection is being established; transfer is about to start.</td></tr>
+<tr><td><code>InProgress</code></td><td><span class="type">8</span></td><td>phase</td><td>Bytes are actively moving.</td></tr>
+<tr><td><code>Completed</code></td><td><span class="type">16</span></td><td>phase</td><td>Terminal phase flag. Always combined with a refinement below.</td></tr>
+<tr><td><code>Succeeded</code></td><td><span class="type">32</span></td><td>refine</td><td>Completed successfully. <code>Completed | Succeeded</code> = <strong>48</strong>.</td></tr>
+<tr><td><code>Cancelled</code></td><td><span class="type">64</span></td><td>refine</td><td>Completed by user cancellation. <code>Completed | Cancelled</code> = <strong>80</strong>.</td></tr>
+<tr><td><code>TimedOut</code></td><td><span class="type">128</span></td><td>refine</td><td>Completed because an operation timed out. <code>Completed | TimedOut</code> = <strong>144</strong>.</td></tr>
+<tr><td><code>Errored</code></td><td><span class="type">256</span></td><td>refine</td><td>Completed with an unhandled error. <code>Completed | Errored</code> = <strong>272</strong>.</td></tr>
+<tr><td><code>Rejected</code></td><td><span class="type">512</span></td><td>refine</td><td>Completed because the remote peer rejected the request. <code>Completed | Rejected</code> = <strong>528</strong>.</td></tr>
+<tr><td><code>Aborted</code></td><td><span class="type">1024</span></td><td>refine</td><td>Completed because the local file could not be found / served (uploads). <code>Completed | Aborted</code> = <strong>1040</strong>.</td></tr>
+<tr><td><code>Locally</code></td><td><span class="type">2048</span></td><td>refine</td><td>Queued in <em>our</em> local queue (waiting for a local slot / retry backoff). <code>Queued | Locally</code> = <strong>2050</strong>.</td></tr>
+<tr><td><code>Remotely</code></td><td><span class="type">4096</span></td><td>refine</td><td>Queued in the <em>remote peer's</em> queue. <code>Queued | Remotely</code> = <strong>4098</strong>.</td></tr>
+</tbody>
+</table></div>
+
+<p>The composite states the application actually emits (and the strings the web client checks against) are:</p>
+
+<div class="table-wrap"><table>
+<thead><tr><th>Serialized string</th><th>Integer</th><th>Phase</th></tr></thead>
+<tbody>
+<tr><td><code>Requested</code></td><td>1</td><td>Queued (optimistic)</td></tr>
+<tr><td><code>Queued, Locally</code></td><td>2050</td><td>Queued</td></tr>
+<tr><td><code>Queued, Remotely</code></td><td>4098</td><td>Queued</td></tr>
+<tr><td><code>Initializing</code></td><td>4</td><td>In progress</td></tr>
+<tr><td><code>InProgress</code></td><td>8</td><td>In progress</td></tr>
+<tr><td><code>Completed, Succeeded</code></td><td>48</td><td>Completed (success)</td></tr>
+<tr><td><code>Completed, Cancelled</code></td><td>80</td><td>Completed (failure)</td></tr>
+<tr><td><code>Completed, TimedOut</code></td><td>144</td><td>Completed (failure)</td></tr>
+<tr><td><code>Completed, Errored</code></td><td>272</td><td>Completed (failure)</td></tr>
+<tr><td><code>Completed, Rejected</code></td><td>528</td><td>Completed (failure)</td></tr>
+<tr><td><code>Completed, Aborted</code></td><td>1040</td><td>Completed (failure)</td></tr>
+</tbody>
+</table></div>
+
+<div class="note callout"><span class="label">Note</span><p>The serialized string is a comma-and-space joined flag list (.NET <code>[Flags]</code> <code>ToString()</code>), so order follows ascending bit value: the coarse flag first, then the refinement (e.g. <code>"Completed, Succeeded"</code>, <code>"Queued, Remotely"</code>). Parse it by splitting on <code>", "</code> and OR-ing the flags, or match the whole string. The web client matches whole strings — see <code>src/web/src/lib/transfers.js</code>.</p></div>
+
+<p>Typical lifecycle (downloads acquire a remote slot; uploads acquire a local slot):</p>
+<pre><code>            ┌──────────────────────── retry (downloads) ───────────────────────┐
+            │                                                                  │
+  Requested ──&gt; Queued,Remotely ──&gt; Initializing ──&gt; InProgress ──&gt; Completed,Succeeded   (48)
+  (download)        (4098)              (4)              (8)
+            └──&gt; Queued,Locally ─┘                         │
+                    (2050)                                 ├──&gt; Completed,Cancelled  (80)
+                                                           ├──&gt; Completed,TimedOut   (144)
+                                                           ├──&gt; Completed,Errored    (272)
+                                                           └──&gt; Completed,Rejected   (528)
+
+  Requested ──&gt; Queued,Locally ──&gt; Initializing ──&gt; InProgress ──&gt; Completed,Succeeded   (48)
+  (upload)        (2050)                                            └──&gt; Completed,Aborted (1040)
+                  (waits for an upload slot in the
+                   user's group; see Upload queue)</code></pre>
+
+<div class="tip callout"><span class="label">Client logic</span><p>The web client derives three predicates from the state string (<code>src/web/src/lib/transfers.js</code>) — these are the canonical rules a client should reproduce:</p>
+<ul>
+<li><strong>Retryable:</strong> <code>state.includes('Completed') &amp;&amp; state !== 'Completed, Succeeded'</code> — any failed terminal state.</li>
+<li><strong>Cancellable:</strong> state is one of <code>InProgress</code>, <code>Requested</code>, <code>Queued</code>, <code>Queued, Remotely</code>, <code>Queued, Locally</code>, <code>Initializing</code>.</li>
+<li><strong>Removable:</strong> <code>state.includes('Completed')</code> — any terminal state.</li>
+</ul></div>
+<p class="src-ref">Source: src/slskd/Transfers/Types/TransferStateCategories.cs · src/slskd/Transfers/Uploads/UploadService.cs · src/web/src/lib/transfers.js</p>
+
+<h2 id="categories">State categories</h2>
+<p>slskd groups state integers into hash sets (<code>TransferStateCategories</code>) so that database queries can use <code>IN (...)</code> instead of bitwise <code>HasFlag</code> (SQLite cannot use indexes for bitwise ops). These categories are what the API filters on — e.g. <code>DELETE /transfers/downloads/all/completed</code> removes every transfer whose state is in the <code>Completed</code> set.</p>
+
+<div class="table-wrap"><table>
+<thead><tr><th>Category</th><th>Member states (integer)</th></tr></thead>
+<tbody>
+<tr><td><code>Successful</code></td><td><code>Completed | Succeeded</code> (48)</td></tr>
+<tr><td><code>Failed</code></td><td><code>Cancelled</code> (80), <code>TimedOut</code> (144), <code>Errored</code> (272), <code>Rejected</code> (528), <code>Aborted</code> (1040) — each OR'd with <code>Completed</code></td></tr>
+<tr><td><code>Completed</code></td><td><code>Completed</code> (16) ∪ <code>Successful</code> ∪ <code>Failed</code></td></tr>
+<tr><td><code>Queued</code></td><td><code>Requested</code> (1), <code>Queued</code> (2), <code>Queued | Locally</code> (2050), <code>Queued | Remotely</code> (4098)</td></tr>
+<tr><td><code>InProgress</code></td><td><code>Initializing</code> (4), <code>InProgress</code> (8)</td></tr>
+</tbody>
+</table></div>
+<p class="src-ref">Source: src/slskd/Transfers/Types/TransferStateCategories.cs</p>
+
+<h2 id="place-in-queue">Place in queue &amp; remote queueing</h2>
+<p>"Place in queue" describes how far a <em>download</em> is from starting in the <strong>remote peer's</strong> upload queue. slskd does not know this until it explicitly asks: <code>GetPlaceInQueueAsync</code> issues a wire-level place request to the peer, stores the answer in <code>placeInQueue</code>, and returns the integer. The value is advisory and frequently inaccurate.</p>
+<p>For <em>uploads</em>, slskd is the one maintaining the queue, so it computes positions itself. The <a href="#groups">upload queue</a> exposes two estimators (used internally when responding to a peer's place request and when forecasting):</p>
+<ul>
+<li><strong>EstimatePosition(user, file)</strong> — estimated position of a specific queued file. For <code>RoundRobin</code> groups it interleaves every user's queue (worst-/average-case interleaving); for <code>FirstInFirstOut</code> groups it is the file's index in the group's time-of-enqueue order (including in-progress uploads), which is accurate.</li>
+<li><strong>ForecastPosition(user)</strong> — position a user would land at if they enqueued now: <code>0</code> if a slot is free; for RoundRobin, <code>(users in group) + 1</code>; for FIFO, <code>(total uploads in group) + 1</code>.</li>
+</ul>
+<p class="src-ref">Source: src/slskd/Transfers/Downloads/DownloadService.cs (GetPlaceInQueueAsync) · src/slskd/Transfers/Uploads/UploadQueue.cs</p>
+
+<h2 id="download-flow">Download flow</h2>
+<p>To download from a peer, a client enqueues one or more files for a username. slskd:</p>
+<ol>
+<li>Resolves the user's IP endpoint and rejects the request if the user is blacklisted or appears offline (<code>UserOfflineException</code> → <span class="type">404</span>).</li>
+<li>Inserts a <code>Transfer</code> record per file in state <code>Queued | Locally</code> (deduplicating against transfers that are already queued or in progress — those land in the <em>failed</em> bucket).</li>
+<li>Requests the file from the peer over the wire; on acceptance the state moves to <code>Queued | Remotely</code> (or directly toward <code>Initializing</code> if a slot is immediately available).</li>
+<li>Streams bytes to an <em>incomplete</em> file, then on success moves the file to its final <a href="#strategies">destination</a> and sets <code>Completed | Succeeded</code>.</li>
+<li>On failure, retries up to the configured attempt limit with exponential-ish backoff (downloads only), resuming or overwriting the partial file per <a href="#strategies"><code>RetryPartialStrategy</code></a>.</li>
+</ol>
+
+<div class="note callout"><span class="label">Concurrency limit</span><p>Both download-enqueue endpoints share a process-wide semaphore of <strong>1 concurrent operation</strong> (a <code>SemaphoreSlim(2,2)</code> entered with <code>Wait(0)</code> per request — only one in-flight at a time effectively, because each request holds it for the duration). A second concurrent enqueue returns <span class="type">429</span> <code>"Only one concurrent operation is permitted. Wait until the previous request completes"</code>.</p></div>
+
+<h3 id="enqueue-single">Single-user enqueue (obsolete)</h3>
+<div class="endpoint"><span class="badge post">POST</span><span class="path">/api/v0/transfers/downloads/{username}</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p><span class="badge dir">Download</span> Marked <code>[Obsolete("Will be phased out in future versions; use batches")]</code>. Body is a JSON <strong>array</strong> of <code>QueueDownloadRequest</code>:</p>
+
+<div class="table-wrap"><table>
+<thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>filename</code></td><td><span class="type">string</span></td><td>yes</td><td>Remote filename to download (exact remote path).</td></tr>
+<tr><td><code>size</code></td><td><span class="type">int64</span></td><td>no</td><td>File size in bytes (defaults to 0 if omitted).</td></tr>
+</tbody>
+</table></div>
+
+<pre><code>POST /api/v0/transfers/downloads/RemoteUser
+Content-Type: application/json
+
+[
+  { "filename": "@@abcde\\Music\\Album\\01 - Track.flac", "size": 31457280 },
+  { "filename": "@@abcde\\Music\\Album\\02 - Track.flac", "size": 28311552 }
+]</code></pre>
+
+<p>Validation and responses:</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Status</th><th>Condition</th></tr></thead>
+<tbody>
+<tr><td><span class="type">201</span></td><td>Accepted. Body: <code>{ "enqueued": [...], "failed": [...] }</code>.</td></tr>
+<tr><td><span class="type">400</span></td><td>Empty array, a null entry, or a filename containing a path-traversal segment.</td></tr>
+<tr><td><span class="type">403</span></td><td>The download was rejected, or the instance is running as a <a href="relay.html">Relay agent</a>.</td></tr>
+<tr><td><span class="type">429</span></td><td>Another enqueue operation is already in flight.</td></tr>
+<tr><td><span class="type">500</span></td><td>Unexpected error (e.g. user offline). Body is the error message string.</td></tr>
+</tbody>
+</table></div>
+<p class="src-ref">Source: src/slskd/Transfers/API/Controllers/TransfersController.cs (EnqueueAsync) · src/slskd/Transfers/API/DTO/QueueDownloadRequest.cs · src/web/src/lib/transfers.js</p>
+
+<h2 id="download-endpoints">Download endpoints</h2>
+<p>All routes are under <code>/api/v0/transfers</code> and require any authenticated role (<span class="badge role any">Any</span>). Every route returns <span class="type">403</span> when the instance is a Relay agent.</p>
+
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/transfers/downloads</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>All downloads, grouped by user then directory. Query: <code>includeRemoved</code> (<span class="type">bool</span>, default <code>false</code>). Returns an array of <code>UserResponse</code> (see <a href="#shape">grouped response shape</a>).</p>
+
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/transfers/downloads/{username}</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>All downloads for one user (single <code>UserResponse</code>). <span class="type">404</span> if the user has no downloads.</p>
+
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/transfers/downloads/{username}/{id}</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>A single download <code>Transfer</code>. <span class="type">400</span> if <code>id</code> is not a GUID; <span class="type">404</span> if not found.</p>
+
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/transfers/downloads/{username}/{id}/position</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Issues a live remote <a href="#place-in-queue">place-in-queue</a> request and returns the integer position; also updates <code>placeInQueue</code> on the record. <span class="type">404</span> if the user is blacklisted or the download is not found.</p>
+
+<div class="endpoint"><span class="badge delete">DELETE</span><span class="path">/api/v0/transfers/downloads/{username}/{id}</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Cancels the download. Query <code>remove</code> (<span class="type">bool</span>, default <code>false</code>): when <code>true</code>, the tracked record is also removed after cancellation. <span class="type">204</span> on success; <span class="type">400</span> if <code>id</code> is not a GUID; <span class="type">404</span> if not found.</p>
+
+<div class="endpoint"><span class="badge delete">DELETE</span><span class="path">/api/v0/transfers/downloads/all/completed</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Removes every download whose state is in the <a href="#categories">Completed</a> category (succeeded or failed) and not already removed. <span class="type">204</span>.</p>
+
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/transfers/downloads/batches/{id}</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Returns a single <a href="#batches">Batch</a> with its included transfers. <span class="type">400</span> if not a GUID; <span class="type">404</span> if not found.</p>
+
+<h3 id="shape">Grouped response shape</h3>
+<p>The list endpoints do not return a flat array of transfers; they group by username and then by directory. The <code>directory</code> key is computed from <code>filename</code>'s remote directory.</p>
+<pre><code>// GET /api/v0/transfers/downloads  →  UserResponse[]
+[
+  {
+    "username": "RemoteUser",
+    "directories": [
+      {
+        "directory": "@@abcde\\Music\\Album",
+        "fileCount": 2,
+        "files": [
+          { "id": "…", "username": "RemoteUser", "direction": "Download",
+            "filename": "@@abcde\\Music\\Album\\01 - Track.flac",
+            "size": 31457280, "state": "InProgress",
+            "bytesTransferred": 12000000, "bytesRemaining": 19457280,
+            "percentComplete": 38.1, "averageSpeed": 1048576,
+            "placeInQueue": null, "enqueuedAt": "…", "startedAt": "…" }
+          /* … */
+        ]
+      }
+    ]
+  }
+]</code></pre>
+<div class="table-wrap"><table>
+<thead><tr><th>Type</th><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td rowspan="2"><code>UserResponse</code></td><td><code>username</code></td><td><span class="type">string</span></td><td>The grouped user.</td></tr>
+<tr><td><code>directories</code></td><td><span class="type">DirectoryResponse[]</span></td><td>Files grouped by remote directory.</td></tr>
+<tr><td rowspan="3"><code>DirectoryResponse</code></td><td><code>directory</code></td><td><span class="type">string</span></td><td>Remote directory name.</td></tr>
+<tr><td><code>fileCount</code></td><td><span class="type">int32</span></td><td>Number of files in the directory.</td></tr>
+<tr><td><code>files</code></td><td><span class="type">Transfer[]</span></td><td>The transfers.</td></tr>
+</tbody>
+</table></div>
+<p class="src-ref">Source: src/slskd/Transfers/API/Controllers/TransfersController.cs · src/slskd/Transfers/API/DTO/{UserResponse,DirectoryResponse}.cs</p>
+
+<h2 id="batches">Download batches</h2>
+<p>A <strong>Batch</strong> is a lightweight grouping of related download transfers, optionally tied to the <a href="search.html">search</a> that produced them and optionally overriding the destination directory. The batch is the recommended way to enqueue (the single-user endpoint is obsolete). A batch is purely a tracking/association construct: the application carries no aggregate counters on it (the source explicitly defers that).</p>
+
+<div class="endpoint"><span class="badge post">POST</span><span class="path">/api/v0/transfers/downloads/batches</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p><span class="badge dir">Download</span> Body is a single <code>QueueDownloadBatchRequest</code>:</p>
+
+<div class="table-wrap"><table>
+<thead><tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>id</code></td><td><span class="type">string</span> (GUID)</td><td>no</td><td>Batch id. If omitted, one is generated. Must be a valid GUID; a duplicate id → <span class="type">409</span>.</td></tr>
+<tr><td><code>searchId</code></td><td><span class="type">string</span> (GUID)</td><td>no</td><td>Associated search id, for "is this search fulfilled?" tracking.</td></tr>
+<tr><td><code>username</code></td><td><span class="type">string</span></td><td>yes</td><td>1–500 chars, non-null/empty/whitespace.</td></tr>
+<tr><td><code>files</code></td><td><span class="type">EnqueueDownloadBatchItem[]</span></td><td>yes</td><td>At least one item; filenames must be unique within the batch.</td></tr>
+<tr><td><code>options</code></td><td><span class="type">EnqueueDownloadBatchOptions</span></td><td>no</td><td>Batch options (below).</td></tr>
+</tbody>
+</table></div>
+
+<div class="table-wrap"><table>
+<thead><tr><th>Type</th><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td rowspan="2"><code>EnqueueDownloadBatchItem</code></td><td><code>filename</code></td><td><span class="type">string</span></td><td>yes</td><td>Remote filename; non-traversing path, non-empty.</td></tr>
+<tr><td><code>size</code></td><td><span class="type">int64?</span></td><td>yes</td><td>File size, range <code>[0, long.MaxValue]</code>. Required in batch items (unlike the single-user DTO).</td></tr>
+<tr><td rowspan="2"><code>EnqueueDownloadBatchOptions</code></td><td><code>destination</code></td><td><span class="type">string</span></td><td>no</td><td>Destination subdirectory relative to the download directory; relative + non-traversing. Takes precedence over the configured placement rules.</td></tr>
+<tr><td><code>externalId</code></td><td><span class="type">string</span></td><td>no</td><td>Caller-supplied opaque id (sanitized before use in path templates).</td></tr>
+</tbody>
+</table></div>
+
+<pre><code>POST /api/v0/transfers/downloads/batches
+Content-Type: application/json
+
+{
+  "id": "1f0d…-uuid",            // optional; generated if omitted
+  "searchId": "9a2c…-uuid",      // optional
+  "username": "RemoteUser",
+  "files": [
+    { "filename": "@@abcde\\Music\\Album\\01 - Track.flac", "size": 31457280 },
+    { "filename": "@@abcde\\Music\\Album\\02 - Track.flac", "size": 28311552 }
+  ],
+  "options": { "destination": "MyArtist/MyAlbum", "externalId": "import-42" }
+}</code></pre>
+
+<p><strong>Response codes</strong> reflect partial success precisely:</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Status</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><span class="type">201 Created</span></td><td>All files enqueued. Body: <code>QueueDownloadBatchResponse</code> (batch + empty failures).</td></tr>
+<tr><td><span class="type">207 Multi-Status</span></td><td>Some files enqueued, some failed. Body lists both.</td></tr>
+<tr><td><span class="type">200 OK</span></td><td>The batch record was created but <em>all</em> files failed to enqueue (already queued/in progress, or errored). Body lists the failures so the caller can learn the id.</td></tr>
+<tr><td><span class="type">400</span></td><td>Bad request: null file, repeated filename, or an id/searchId that is not a valid GUID.</td></tr>
+<tr><td><span class="type">404</span></td><td>User offline.</td></tr>
+<tr><td><span class="type">409</span></td><td>A batch with the supplied id already exists.</td></tr>
+<tr><td><span class="type">429</span></td><td>Another enqueue operation is in flight.</td></tr>
+<tr><td><span class="type">500</span></td><td>Unexpected error.</td></tr>
+</tbody>
+</table></div>
+
+<p><code>QueueDownloadBatchResponse</code>:</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>batch</code></td><td><span class="type">Batch</span></td><td>The created batch with its successfully-inserted transfers attached.</td></tr>
+<tr><td><code>failures</code></td><td><span class="type">QueueDownloadBatchResponseFailure[]</span></td><td>One entry per file that failed, each <code>{ "filename": "...", "message": "..." }</code>.</td></tr>
+</tbody>
+</table></div>
+
+<p><code>Batch</code> entity:</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>id</code></td><td><span class="type">Guid</span></td><td>Batch identifier.</td></tr>
+<tr><td><code>searchId</code></td><td><span class="type">Guid?</span></td><td>Associated search, if any.</td></tr>
+<tr><td><code>username</code></td><td><span class="type">string</span></td><td>Source user.</td></tr>
+<tr><td><code>direction</code></td><td><span class="type">enum</span></td><td>Always <code>Download</code> (upload batches do not exist).</td></tr>
+<tr><td><code>createdAt</code></td><td><span class="type">DateTime</span></td><td>Creation time (UTC).</td></tr>
+<tr><td><code>transfers</code></td><td><span class="type">Transfer[]</span></td><td>Associated transfer records (included when fetched).</td></tr>
+<tr><td><code>options</code></td><td><span class="type">BatchOptions</span></td><td><code>{ destination, externalId }</code> as supplied.</td></tr>
+</tbody>
+</table></div>
+
+<div class="tip callout"><span class="label">Search fulfilment</span><p>Because failed-but-already-in-progress files are dropped during deduplication, a batch's transfer set may be smaller than the requested file list. The intended use is to poll <code>GET /transfers/downloads/batches/{id}</code> and check whether all included transfers are in a terminal state to decide whether a search has been fulfilled.</p></div>
+<p class="src-ref">Source: src/slskd/Transfers/API/Controllers/TransfersController.cs (EnqueueBatchAsync) · src/slskd/Transfers/API/DTO/{QueueDownloadBatchRequest,QueueDownloadBatchResponse}.cs · src/slskd/Transfers/Types/{Batch,BatchOptions}.cs</p>
+
+<h2 id="upload-flow">Upload flow &amp; the queue</h2>
+<p>slskd serves uploads in response to remote peers' <a href="#wire">enqueue requests</a>. There is no API to "start" an upload — they are demand-driven. When a peer requests a file:</p>
+<ol>
+<li>slskd validates the request against the requesting user's <a href="#groups">group limits</a> (queued/daily/weekly file, megabyte, and failure caps from <a href="#options">Limits options</a>) using <code>UserUploadStatistics</code>. If a limit is exceeded the request is rejected.</li>
+<li>A <code>Transfer</code> is created in state <code>Queued | Locally</code> and an <code>Upload</code> is enqueued into the in-memory <code>UploadQueue</code>.</li>
+<li>The transfer awaits a slot. When the peer's data connection is ready, the queue marks the upload <em>ready</em> (<code>upload.ready = now</code>).</li>
+<li>The queue's <code>Process()</code> loop selects the next ready upload according to group priority and strategy, marks it <em>started</em>, consumes a slot, and releases the <code>TaskCompletionSource</code> so the transfer proceeds to <code>InProgress</code>.</li>
+<li>On completion the slot is returned to the group it was drawn from.</li>
+</ol>
+
+<p>The <code>Upload</code> queue record (in-memory, not the DTO):</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>Username</code></td><td><span class="type">string</span></td><td>Requesting user.</td></tr>
+<tr><td><code>Filename</code></td><td><span class="type">string</span></td><td>Requested file.</td></tr>
+<tr><td><code>Group</code></td><td><span class="type">string</span></td><td>Group the slot was pinned to (set when started).</td></tr>
+<tr><td><code>Enqueued</code></td><td><span class="type">DateTime</span></td><td>When enqueued (FIFO ordering key).</td></tr>
+<tr><td><code>Ready</code></td><td><span class="type">DateTime?</span></td><td>When the peer connection became ready (RoundRobin ordering key); <code>null</code> until ready.</td></tr>
+<tr><td><code>Started</code></td><td><span class="type">DateTime?</span></td><td>When a slot was granted; <code>null</code> until started.</td></tr>
+</tbody>
+</table></div>
+
+<div class="warn callout"><span class="label">Global cap</span><p>The queue refuses to release any upload once the sum of used slots across all groups reaches the global <code>upload-slots</code> count, even if a group has spare slots. This deliberately keeps queue ordering under slskd's control rather than letting requests stack behind Soulseek.NET's internal upload semaphore.</p></div>
+<p class="src-ref">Source: src/slskd/Transfers/Uploads/{UploadQueue,UploadService,UploadGovernor}.cs · src/slskd/Transfers/Types/{Upload,UserUploadStatistics}.cs</p>
+
+<h2 id="groups">Upload groups, slots &amp; priorities</h2>
+<p>Every remote user maps to exactly one <strong>upload group</strong>. Groups have a priority, a slot count, and a queue strategy. The queue processes groups in ascending priority order (lower number = higher priority) and stops after releasing the first ready upload it finds.</p>
+
+<p>Three groups are built in; user-defined groups are added on top:</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Group</th><th>Priority</th><th>Slots</th><th>Strategy</th><th>Membership</th></tr></thead>
+<tbody>
+<tr><td><code>privileged</code></td><td><strong>0</strong> (hard-coded, highest)</td><td>= global <code>upload-slots</code></td><td><code>FirstInFirstOut</code> (fixed)</td><td>Soulseek-privileged users.</td></tr>
+<tr><td><code>default</code></td><td>config (≥ 1; default 1)</td><td><code>min(group.slots, global)</code></td><td>config (default <code>roundRobin</code>)</td><td>Users not privileged, not leechers, in no other group.</td></tr>
+<tr><td><code>leechers</code></td><td>config (≥ 1; default 1)</td><td><code>min(group.slots, global)</code></td><td>config (default <code>roundRobin</code>)</td><td>Users below the shared files/directories thresholds.</td></tr>
+<tr><td><em>user-defined</em></td><td>config (≥ 1)</td><td><code>min(group.slots, global)</code></td><td>config</td><td>Explicit member lists.</td></tr>
+</tbody>
+</table></div>
+
+<p>The <code>UploadGroup</code> record (also the shape of <code>GET .../uploads</code> group info internally):</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>name</code></td><td><span class="type">string</span></td><td>Group name.</td></tr>
+<tr><td><code>priority</code></td><td><span class="type">int32</span></td><td>Lower is processed first.</td></tr>
+<tr><td><code>slots</code></td><td><span class="type">int32</span></td><td>Maximum concurrent uploads for the group.</td></tr>
+<tr><td><code>usedSlots</code></td><td><span class="type">int32</span></td><td>Slots currently in use.</td></tr>
+<tr><td><code>slotAvailable</code></td><td><span class="type">bool</span></td><td>Computed: <code>usedSlots &lt; slots</code>.</td></tr>
+<tr><td><code>strategy</code></td><td><span class="type">QueueStrategy</span></td><td><code>RoundRobin</code> or <code>FirstInFirstOut</code>.</td></tr>
+</tbody>
+</table></div>
+
+<p><strong>Strategy semantics</strong> (selection within a group):</p>
+<ul>
+<li><code>RoundRobin</code> (0) — among ready uploads, the one ready longest wins (orders by <code>Ready</code>). Spreads slots across users; a faster downloader naturally advances faster.</li>
+<li><code>FirstInFirstOut</code> (1) — among ready uploads, the one enqueued earliest wins (orders by <code>Enqueued</code>). Privileged users are fixed to FIFO to mimic the official client.</li>
+</ul>
+<p class="src-ref">Source: src/slskd/Transfers/Uploads/UploadQueue.cs · src/slskd/Transfers/Types/{UploadGroup,QueueStrategy}.cs · src/slskd/Core/Options.cs (GroupsOptions)</p>
+
+<h2 id="upload-endpoints">Upload endpoints</h2>
+<p>Uploads are read-only and cancellable from the API (you cannot initiate one). All under <code>/api/v0/transfers</code>, role <span class="badge role any">Any</span>, <span class="type">403</span> on Relay agents.</p>
+
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/transfers/uploads</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>All uploads, grouped by user → directory (<code>UserResponse[]</code>). Query: <code>includeRemoved</code> (<span class="type">bool</span>, default <code>false</code>).</p>
+
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/transfers/uploads/{username}</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>All uploads for one user (single <code>UserResponse</code>, removed excluded). <span class="type">404</span> if none.</p>
+
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/transfers/uploads/{username}/{id}</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>A single upload <code>Transfer</code>. <span class="type">400</span> if not a GUID; <span class="type">404</span> if not found.</p>
+
+<div class="endpoint"><span class="badge delete">DELETE</span><span class="path">/api/v0/transfers/uploads/{username}/{id}</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Cancels the upload. Query <code>remove</code> (<span class="type">bool</span>, default <code>false</code>). <span class="type">204</span> / <span class="type">400</span> / <span class="type">404</span> as for downloads.</p>
+
+<div class="endpoint"><span class="badge delete">DELETE</span><span class="path">/api/v0/transfers/uploads/all/completed</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Removes every upload whose state is in the <a href="#categories">Completed</a> category and not already removed. <span class="type">204</span>.</p>
+
+<div class="note callout"><span class="label">Note</span><p>There is no upload equivalent of <code>/position</code> — place in queue is a download-only concept (it queries the <em>remote</em> peer). For uploads, slskd reports the peer their position via the wire-level place response computed by the upload queue.</p></div>
+<p class="src-ref">Source: src/slskd/Transfers/API/Controllers/TransfersController.cs</p>
+
+<h2 id="strategies">Strategies &amp; placement</h2>
+<p>Four enums govern how downloaded files are placed on disk and how partial files are handled. All four are serialized/configured by their <em>lowercased</em> name (e.g. <code>"resume"</code>, <code>"overwrite"</code>, <code>"rename"</code>, <code>"roundrobin"</code>, <code>"firstinfirstout"</code>) via the options system.</p>
+
+<div class="table-wrap"><table>
+<thead><tr><th>Enum</th><th>Member (value)</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td rowspan="2"><code>RetryPartialStrategy</code></td><td><code>Overwrite</code> (0)</td><td>On retry, discard the partial file and start over from offset 0.</td></tr>
+<tr><td><code>Resume</code> (1) <em>(default)</em></td><td>On retry, resume using the partial file's current size as the start offset.</td></tr>
+<tr><td rowspan="2"><code>DestinationExistsStrategy</code></td><td><code>Rename</code> (0) <em>(default)</em></td><td>If the destination file already exists, write under a renamed (appended) name.</td></tr>
+<tr><td><code>Overwrite</code> (1)</td><td>Overwrite the existing destination file.</td></tr>
+<tr><td rowspan="2"><code>DestinationConflictStrategy</code></td><td><code>Rename</code> (0)</td><td>Resolve a name conflict by appending to the new file's name.</td></tr>
+<tr><td><code>Overwrite</code> (1)</td><td>Overwrite the conflicting file.</td></tr>
+<tr><td rowspan="2"><code>QueueStrategy</code></td><td><code>RoundRobin</code> (0) <em>(group default)</em></td><td>Prioritize uploads by the time they became <em>ready</em>.</td></tr>
+<tr><td><code>FirstInFirstOut</code> (1)</td><td>Prioritize uploads by the time they were <em>enqueued</em>.</td></tr>
+</tbody>
+</table></div>
+
+<h3 id="placement">Destination placement</h3>
+<p>The destination subdirectory for a download is derived from a token-templated pattern (<code>Transfers.Download.Destination.Subdirectory</code>, default <code>${SOURCE_DIRECTORY}</code>). A batch's <code>options.destination</code> overrides this pattern. The pattern is matched against <code>${TOKEN}</code> placeholders; tokens include the (sanitized) source username, source directory, batch external id, and search text. All resolved values are sanitized and forced to a relative, non-traversing path; an absolute or traversing result throws <code>SlskdException</code> as a backstop.</p>
+
+<div class="note callout"><span class="label">Filename sanitization</span><p>There is <strong>no <code>sanitizeFilenames</code> on/off option</strong> in the current source. Sanitization is unconditional: every path segment that reaches disk is passed through <code>FileSafety.SanitizePath</code>/<code>SanitizePathSegment</code>/<code>GetFileNameSafely</code>, and the API rejects any request whose filename contains a path-traversal segment up front (<span class="type">400</span>).</p></div>
+<p class="src-ref">Source: src/slskd/Transfers/Types/{RetryPartialStrategy,DestinationExistsStrategy,DestinationConflictStrategy,QueueStrategy}.cs · src/slskd/Transfers/Downloads/DownloadService.cs · src/slskd/Common/FileSafety.cs</p>
+
+<h2 id="options">Relevant options</h2>
+<p>Transfer behaviour is configured under the <code>transfers</code> options section (CLI/env vars shown where defined). Speed limits are in kibibytes/second.</p>
+
+<h3 id="opt-global">Global upload / download</h3>
+<div class="table-wrap"><table>
+<thead><tr><th>Path</th><th>Type</th><th>Default</th><th>CLI / Env</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>transfers.upload.slots</code></td><td><span class="type">int32</span> [1..]</td><td><code>10</code></td><td><code>--upload-slots</code> / <code>UPLOAD_SLOTS</code></td><td>Total upload slots (caps every group). Requires restart.</td></tr>
+<tr><td><code>transfers.upload.speedLimit</code></td><td><span class="type">int32</span> [1..]</td><td><code>int.MaxValue</code></td><td><code>--upload-speed-limit</code> / <code>UPLOAD_SPEED_LIMIT</code></td><td>Total upload speed limit (KiB/s).</td></tr>
+<tr><td><code>transfers.download.slots</code></td><td><span class="type">int32</span> [1..]</td><td><code>int.MaxValue</code></td><td><code>--download-slots</code> / <code>DOWNLOAD_SLOTS</code></td><td>Total download slots. Requires restart.</td></tr>
+<tr><td><code>transfers.download.speedLimit</code></td><td><span class="type">int32</span> [1..]</td><td><code>int.MaxValue</code></td><td><code>--download-speed-limit</code> / <code>DOWNLOAD_SPEED_LIMIT</code></td><td>Total download speed limit (KiB/s).</td></tr>
+</tbody>
+</table></div>
+
+<h3 id="opt-retry">Download retry &amp; destination</h3>
+<div class="table-wrap"><table>
+<thead><tr><th>Path</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>transfers.download.retry.attempts</code></td><td><span class="type">int32</span> [1..]</td><td><code>3</code></td><td>Max retries for a failed download.</td></tr>
+<tr><td><code>transfers.download.retry.delay</code></td><td><span class="type">int32</span> [1000..] ms</td><td><code>5000</code></td><td>Base wait between retries.</td></tr>
+<tr><td><code>transfers.download.retry.maxDelay</code></td><td><span class="type">int32</span> [30000..] ms</td><td><code>60000</code></td><td>Cap on retry wait.</td></tr>
+<tr><td><code>transfers.download.retry.partial</code></td><td><span class="type">enum</span></td><td><code>resume</code></td><td><a href="#strategies"><code>RetryPartialStrategy</code></a>.</td></tr>
+<tr><td><code>transfers.download.destination.subdirectory</code></td><td><span class="type">string</span></td><td><code>${SOURCE_DIRECTORY}</code></td><td>Token-templated placement pattern (relative, non-traversing).</td></tr>
+<tr><td><code>transfers.download.destination.exists</code></td><td><span class="type">enum</span></td><td><code>rename</code></td><td><a href="#strategies"><code>DestinationExistsStrategy</code></a>.</td></tr>
+<tr><td><code>transfers.download.destination.permissions.mode</code></td><td><span class="type">string</span> (chmod)</td><td><em>unset</em></td><td>POSIX file mode (3–4 octal digits) for created files/dirs; non-Windows only.</td></tr>
+</tbody>
+</table></div>
+
+<h3 id="opt-groups">Groups</h3>
+<div class="table-wrap"><table>
+<thead><tr><th>Path</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>transfers.groups.default.upload.priority</code></td><td><span class="type">int32</span> [1..]</td><td><code>1</code></td><td>Default group priority.</td></tr>
+<tr><td><code>transfers.groups.default.upload.strategy</code></td><td><span class="type">enum</span></td><td><code>roundrobin</code></td><td>Queue strategy for the default group.</td></tr>
+<tr><td><code>transfers.groups.default.upload.slots</code></td><td><span class="type">int32</span> [1..]</td><td><code>int.MaxValue</code></td><td>Slots (capped by global).</td></tr>
+<tr><td><code>transfers.groups.default.upload.speedLimit</code></td><td><span class="type">int32</span> [1..]</td><td><code>int.MaxValue</code></td><td>Group upload speed limit (KiB/s).</td></tr>
+<tr><td><code>transfers.groups.leechers.upload.*</code></td><td colspan="3">Same shape as <code>default</code>, plus <code>thresholds.files</code> / <code>thresholds.directories</code> (default <code>1</code> each) that decide who is a leecher.</td></tr>
+<tr><td><code>transfers.groups.userDefined.{name}.upload.*</code></td><td colspan="3">Same shape as <code>default</code>, plus a <code>members</code> string array. Names may not collide with <code>privileged</code>/<code>default</code>/<code>leechers</code>.</td></tr>
+<tr><td><code>transfers.groups.blacklisted.{members,patterns,cidrs}</code></td><td colspan="3">Usernames, username regexes, and CIDR ranges that are blacklisted (rejected outright).</td></tr>
+</tbody>
+</table></div>
+
+<h3 id="opt-limits">Per-group limits</h3>
+<p>Each group's <code>upload.limits</code> (and the global <code>upload.limits</code>) define <code>queued</code>, <code>daily</code> and <code>weekly</code> caps, each with optional <code>files</code> (<span class="type">int32?</span>), <code>megabytes</code> (<span class="type">int32?</span>) and <code>failures</code> (<span class="type">int32?</span>) — all <code>null</code> (unlimited) by default. These are evaluated against the requesting user's <code>UserUploadStatistics</code> when an incoming enqueue request arrives; exceeding any limit rejects the request.</p>
+<p class="src-ref">Source: src/slskd/Core/Options.cs (TransfersOptions, GlobalUploadOptions, GlobalDownloadOptions, GroupsOptions, LimitsOptions)</p>
+
+<h2 id="wire">Wire-level negotiation</h2>
+<p>Everything above sits on top of the native Soulseek peer-to-peer transfer handshake. A client speaking the raw protocol (rather than driving slskd) performs the following. Message codes are peer-message codes on the <code>P</code> (peer) connection; see <a href="soulseek-protocol.html">Soulseek Wire Protocol</a> for the framing.</p>
+
+<div class="msg-card"><div class="msg-head"><span class="msg-code">Code 43</span> <strong>QueueUpload</strong></div>
+<p>The downloader asks the uploader to enqueue a file. Payload: the <code>filename</code> string. The uploader responds either by accepting (eventually sending a <code>TransferRequest</code> when a slot frees) or by sending an <code>UploadDenied</code>/<code>QueueFailed</code> reason.</p></div>
+
+<div class="msg-card"><div class="msg-head"><span class="msg-code">Code 40</span> <strong>TransferRequest</strong></div>
+<p>Sent by the side that will <em>send</em> the file (the uploader for a normal download). Payload: a <code>direction</code> (0 = download / 1 = upload from the sender's perspective), a <code>token</code> (<span class="type">uint32</span>), the <code>filename</code>, and the <code>fileSize</code> (<span class="type">uint64</span>). The token keys the subsequent file connection.</p></div>
+
+<div class="msg-card"><div class="msg-head"><span class="msg-code">Code 41</span> <strong>TransferResponse</strong></div>
+<p>Reply to a <code>TransferRequest</code>. Payload: the <code>token</code>, an <code>allowed</code> flag, and either the <code>fileSize</code> (when allowed) or a rejection <code>message</code> (e.g. <code>"Queued"</code>, <code>"File not shared."</code>). A <code>"Queued"</code> response maps to the <code>Queued | Remotely</code> state.</p></div>
+
+<div class="msg-card"><div class="msg-head"><span class="msg-code">Code 44</span> <strong>PlaceInQueueRequest</strong> &middot; <span class="msg-code">Code 44</span> <strong>PlaceInQueueResponse</strong></div>
+<p>The downloader requests its current place; the uploader replies with the <code>filename</code> and an integer <code>place</code>. This is exactly what <code>GET /downloads/{username}/{id}/position</code> triggers, and what the upload queue's position estimator answers when slskd is the uploader.</p></div>
+
+<div class="msg-card"><div class="msg-head"><strong>File connection ('F')</strong></div>
+<p>Once a transfer is allowed, the receiving side opens (or pierces a firewall to) a dedicated <strong>file connection</strong> keyed by the negotiated <code>token</code>. The first bytes the downloader sends on this connection are the 4-byte token, followed by an <strong>8-byte (uint64) file offset</strong> indicating where to begin streaming — this is the resume mechanism. For a fresh download the offset is <code>0</code>; for a <code>Resume</code> retry it is the size of the on-disk partial file (slskd's internal <code>startOffset</code>). The uploader then streams raw file bytes from that offset until <code>fileSize</code> bytes have been delivered.</p></div>
+
+<div class="note callout"><span class="label">Cross-reference</span><p>Message codes and exact byte layouts are specified in <a href="soulseek-protocol.html">Soulseek Wire Protocol</a>; the <code>Transfer</code>/<code>TransferDirection</code>/<code>TransferStates</code> types live in <a href="data-model.html#transfer">Data Model &amp; Types</a>; transfer state-change and progress events delivered over SignalR are documented in <a href="realtime-api.html">Real-Time API &amp; Events</a> (slskd subscribes to Soulseek.NET's <code>TransferStateChanged</code> and <code>TransferProgressUpdated</code> and relays digests to clients).</p></div>
+<p class="src-ref">Source: src/slskd/Transfers/Downloads/DownloadService.cs (DownloadAsync, startOffset) · src/slskd/Transfers/Uploads/UploadService.cs · Soulseek.NET peer message catalog</p>
+
+    <div class="page-nav-links">
+      <a class="prev" href="search.html"><span class="dir">&larr; Previous</span><br><span class="ttl">Search</span></a>
+      <a class="next" href="users-rooms.html"><span class="dir">Next &rarr;</span><br><span class="ttl">Users, Rooms &amp; Chat</span></a>
+    </div>
+    <footer class="page-footer">
+      <span>slskd / Soulseek Protocol &amp; Model Specification &middot; derived from source (slskd, Soulseek.NET 10.0.1) &middot; AGPL-3.0</span>
+      <span>Not an official Soulseek document.</span>
+    </footer>
+  </main>
+</div>
+</div>
+<script src="script.js"></script>
+</body>
+</html>

@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shares &amp; Browsing · slskd Protocol &amp; Model Specification</title>
+<meta name="description" content="slskd / Soulseek network, protocol and data-model specification — Shares &amp; Browsing. A language-agnostic reference for building clients, apps and services that interoperate with the Soulseek platform.">
+<link rel="stylesheet" href="style.css">
+<script>(function(){try{var t=localStorage.getItem('slskd-spec-theme');if(t){document.documentElement.setAttribute('data-theme',t);}else if(window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches){document.documentElement.setAttribute('data-theme','dark');}}catch(e){}})();</script>
+</head>
+<body>
+<div class="scrim"></div>
+<div class="layout">
+<aside class="sidebar">
+  <div class="brand">
+    <div class="logo">sd</div>
+    <div class="brand-text">
+      <span class="brand-title">slskd Spec</span>
+      <span class="brand-sub">Soulseek protocol &amp; model</span>
+    </div>
+  </div>
+  <div class="nav-filter-wrap"><input class="nav-filter" type="text" placeholder="Filter pages…" aria-label="Filter pages"></div>
+  <nav>
+  <div class="nav-group-label">Introduction</div>
+  <ul>
+    <li><a href="index.html"><span class="nav-num">1</span><span>Overview</span></a></li>
+    <li><a href="architecture.html"><span class="nav-num">2</span><span>Architecture &amp; Concepts</span></a></li>
+  </ul>
+  <div class="nav-group-label">The Soulseek Network</div>
+  <ul>
+    <li><a href="soulseek-protocol.html"><span class="nav-num">3</span><span>Soulseek Wire Protocol</span></a></li>
+    <li><a href="data-model.html"><span class="nav-num">4</span><span>Data Model &amp; Types</span></a></li>
+  </ul>
+  <div class="nav-group-label">Domains</div>
+  <ul>
+    <li><a href="search.html"><span class="nav-num">5</span><span>Search</span></a></li>
+    <li><a href="transfers.html"><span class="nav-num">6</span><span>Transfers &amp; Queueing</span></a></li>
+    <li><a href="users-rooms.html"><span class="nav-num">7</span><span>Users, Rooms &amp; Chat</span></a></li>
+    <li class="active"><a href="shares.html" aria-current="page"><span class="nav-num">8</span><span>Shares &amp; Browsing</span></a></li>
+  </ul>
+  <div class="nav-group-label">Integration</div>
+  <ul>
+    <li><a href="authentication.html"><span class="nav-num">9</span><span>Authentication &amp; Security</span></a></li>
+    <li><a href="rest-api.html"><span class="nav-num">10</span><span>REST API Reference</span></a></li>
+    <li><a href="realtime-api.html"><span class="nav-num">11</span><span>Real-Time API &amp; Events</span></a></li>
+    <li><a href="relay.html"><span class="nav-num">12</span><span>Relay Protocol</span></a></li>
+  </ul>
+</nav>
+</aside>
+<div class="main-col">
+  <header class="topbar">
+    <button class="menu-btn" aria-label="Toggle navigation">&#9776;</button>
+    <span class="crumb">Domains / <b>Shares &amp; Browsing</b></span>
+    <span class="spacer"></span>
+    <a class="tb-link" href="index.html#sitemap">Contents</a>
+    <a class="tb-link" href="https://github.com/slskd/slskd" target="_blank" rel="noopener">GitHub</a>
+    <button class="theme-toggle" aria-label="Toggle dark mode" title="Toggle theme">◐</button>
+  </header>
+  <main class="content">
+
+<h1>Shares &amp; Browsing</h1>
+<p class="page-lede">A Soulseek peer offers files to the network by <em>sharing</em> local directories. slskd scans configured directories into a SQLite cache, advertises aggregate counts to the server, answers peer <em>browse</em> and <em>directory-contents</em> requests with a backslash-delimited virtual directory tree, and resolves the virtual paths that other peers request back to physical files for upload. This page specifies the share configuration syntax, the share/host/scan model, how shares are scanned, cached and advertised, the browse protocol in both directions, the REST <code>/api/v0/shares</code> surface, and virtual-to-physical path resolution.</p>
+
+<nav class="toc">
+  <div class="toc-title">On this page</div>
+  <ul>
+    <li><a href="#concepts">Concepts &amp; terminology</a></li>
+    <li><a href="#share-config">Share configuration syntax</a></li>
+    <li><a href="#share-model">Share, Host, Scan &amp; StorageMode</a></li>
+    <li><a href="#scanning">Scanning &amp; the share cache</a></li>
+    <li><a href="#masking">Path masking &amp; virtual paths</a></li>
+    <li><a href="#advertising">Advertising shares to the network</a></li>
+    <li><a href="#browse-incoming">Browse &amp; directory listing (incoming)</a></li>
+    <li><a href="#browse-outgoing">Browsing another user (outgoing)</a></li>
+    <li><a href="#shares-api">Shares REST API</a></li>
+    <li><a href="#resolution">File resolution (download path)</a></li>
+    <li><a href="#relay">Relay hosts &amp; remote share databases</a></li>
+  </ul>
+</nav>
+
+<h2 id="concepts">Concepts &amp; terminology</h2>
+<p>Three forms of a path coexist in the share subsystem. Keeping them distinct is essential to interoperation.</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Term</th><th>Example</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><strong>Local path</strong></td><td><code>/home/me/Music/test/foo.txt</code></td><td>The physical file on the host's filesystem. Native OS separators. Never sent over the network.</td></tr>
+<tr><td><strong>Alias / remote path root</strong></td><td><code>Music</code></td><td>The single-segment name under which a shared directory is presented to peers. Defaults to the share folder's name.</td></tr>
+<tr><td><strong>Masked / remote / virtual path</strong></td><td><code>Music\test\foo.txt</code></td><td>The path as seen by remote peers and as it travels on the wire: the <em>local path</em> with its share root replaced by the alias and all separators normalized to backslash (<code>\</code>).</td></tr>
+</tbody>
+</table>
+</div>
+<div class="note callout"><span class="label">Note</span><p>Soulseek paths use the Windows backslash <code>\</code> as the directory separator regardless of the host OS. slskd normalizes every masked path with <code>path.Replace('/', '\\')</code> before storing it in the cache or sending it on the wire. Clients consuming or producing masked paths must treat <code>\</code> as the separator and must <strong>not</strong> URL-style or POSIX-style normalize them.</p></div>
+<p class="src-ref">Source: src/slskd/Common/CommonExtensions.cs (<code>NormalizePathForSoulseek</code>), src/slskd/Shares/ShareScanner.cs.</p>
+
+<h2 id="share-config">Share configuration syntax</h2>
+<p>Shares are configured through <code>shares.directories</code> (CLI <code>-s</code>/<code>--shared</code>, env <code>SLSKD_SHARED_DIR</code>), an array of strings. Each entry is a single path with optional decorators. The full grammar of one entry:</p>
+<pre><code>[ ('-' | '!') ]  [ '[' alias ']' ]  &lt;absolute-local-path&gt;</code></pre>
+
+<div class="table-wrap">
+<table>
+<thead><tr><th>Decorator</th><th>Syntax</th><th>Effect</th></tr></thead>
+<tbody>
+<tr><td>Exclusion</td><td>leading <code>-</code> or <code>!</code></td><td>The path (and everything beneath it) is <em>excluded</em>. Used to carve a subdirectory out of a broader share.</td></tr>
+<tr><td>Alias</td><td><code>[Name]</code> prefix</td><td>Presents the share under <code>Name</code> instead of the folder's own name. Improves privacy when the local path leaks a username.</td></tr>
+<tr><td>(none)</td><td>bare path</td><td>Alias defaults to the last path segment, e.g. <code>D:\Music</code> &rarr; alias <code>Music</code>.</td></tr>
+</tbody>
+</table>
+</div>
+
+<h3 id="config-examples">Examples</h3>
+<pre><code>shares:
+  directories:
+    - 'D:\Music'                         # shared as "Music"
+    - '!D:\Music\Personal Recordings'    # excluded subdirectory of the above
+    - '[Library]\\users\John Doe\Music'  # aliased as "Library" to hide the username
+</code></pre>
+
+<h3 id="config-rules">Path &amp; alias rules (validated at startup)</h3>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Rule</th><th>Detail</th></tr></thead>
+<tbody>
+<tr><td>Must be absolute</td><td>Must begin with <code>/</code>, <code>X:</code> (drive letter), or <code>\\</code> (UNC). Relative paths (<code>~/dir</code>, <code>../dir</code>) are rejected.</td></tr>
+<tr><td>No root mount</td><td>Sharing <code>/</code> on a unix-like OS is explicitly rejected.</td></tr>
+<tr><td>No traversal segments</td><td>Entries containing <code>/./</code>, <code>/../</code> (or backslash equivalents) are rejected.</td></tr>
+<tr><td>Alias non-empty</td><td>An alias may not be null, empty, or whitespace; an entry like <code>[Music]</code> with no path is rejected ("does not specify a path").</td></tr>
+<tr><td>Alias no separators</td><td>Aliases may not contain <code>/</code> or <code>\</code> (the alias is a single directory segment).</td></tr>
+<tr><td>Aliases unique</td><td>Two shares may not resolve to the same alias ("collide"). Specify an alias to disambiguate.</td></tr>
+<tr><td>Paths unique</td><td>The same physical path may not be shared twice under different aliases.</td></tr>
+</tbody>
+</table>
+</div>
+<p>Trailing separators are trimmed (<code>share.TrimEnd('/', '\\')</code>) and duplicate entries are de-duplicated before processing. Shares are processed longest-local-path-first, so a subdirectory share can be aliased independently of its parent.</p>
+<p class="src-ref">Source: src/slskd/Core/Options.cs (<code>SharesOptions.ValidateShares</code>), src/slskd/Shares/Types/Share.cs, src/slskd/Shares/ShareService.cs (<code>Configure</code>), docs/config.md.</p>
+
+<h3 id="config-filters">Share filters (masks)</h3>
+<p><code>shares.filters</code> (CLI <code>--share-filter</code>, env <code>SLSKD_SHARE_FILTER</code>) is an array of regular expressions. During a scan, any directory or file whose <em>physical</em> path matches at least one filter is excluded from the cache. Filters are case-insensitive by default; case sensitivity follows the global <code>flags.case_sensitive_regex</code> option. The default list is empty.</p>
+<pre><code>shares:
+  filters:
+    - \.ini$
+    - Thumbs.db$
+    - \.DS_Store$
+</code></pre>
+<div class="note callout"><span class="label">Note</span><p>Filters are matched against the <em>original (local)</em> filename, not the masked path, and an invalid regular expression fails option validation. This is distinct from <a href="search.html">search filters</a> (<code>filters.search</code>), which reject incoming search <em>requests</em> rather than files.</p></div>
+<p class="src-ref">Source: src/slskd/Shares/ShareScanner.cs, src/slskd/Core/Options.cs (<code>SharesOptions.ValidateFilters</code>).</p>
+
+<h2 id="share-model">Share, Host, Scan &amp; StorageMode</h2>
+
+<h3 id="model-share">Share</h3>
+<p>Each configured directory becomes one <code>Share</code>. Serialized to JSON in camelCase by the <a href="rest-api.html">REST API</a>.</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>id</code></td><td><span class="type">string</span></td><td>SHA-1 hash of the <code>remotePath</code> (= the alias). Stable identifier used in <code>/shares/{id}</code> routes.</td></tr>
+<tr><td><code>alias</code></td><td><span class="type">string</span></td><td>The alias; equals the bracketed name or the last path segment.</td></tr>
+<tr><td><code>isExcluded</code></td><td><span class="type">bool</span></td><td><code>true</code> if the raw entry began with <code>-</code> or <code>!</code>.</td></tr>
+<tr><td><code>localPath</code></td><td><span class="type">string</span></td><td>The physical directory path (OS separators).</td></tr>
+<tr><td><code>raw</code></td><td><span class="type">string</span></td><td>The original configuration string, decorators included.</td></tr>
+<tr><td><code>remotePath</code></td><td><span class="type">string</span></td><td>The path root presented to peers. Currently equal to <code>alias</code>.</td></tr>
+<tr><td><code>directories</code></td><td><span class="type">int?</span></td><td>Directory count under this share, populated after a scan; <code>null</code> until then.</td></tr>
+<tr><td><code>files</code></td><td><span class="type">int?</span></td><td>File count under this share, populated after a scan; <code>null</code> until then.</td></tr>
+</tbody>
+</table>
+</div>
+<p class="src-ref">Source: src/slskd/Shares/Types/Share.cs. See also <a href="data-model.html#share">data-model.html#share</a>.</p>
+
+<h3 id="model-host">Host</h3>
+<p>A <code>Host</code> groups the shares that originate from one instance. The local instance is always present as a host named <code>local</code> (<code>Program.LocalHostName</code>); additional hosts are <a href="relay.html">relay agents</a>, each named after the agent's configured <code>InstanceName</code>.</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>name</code></td><td><span class="type">string</span></td><td>Host name; <code>"local"</code> for the local instance, otherwise the agent's instance name.</td></tr>
+<tr><td><code>isLocalHost</code></td><td><span class="type">bool</span></td><td><code>true</code> when <code>name == "local"</code>.</td></tr>
+<tr><td><code>shares</code></td><td><span class="type">Share[]</span></td><td>The shares hosted by this host.</td></tr>
+</tbody>
+</table>
+</div>
+<p>The browse and search responses sent to the network are the <strong>union</strong> of all hosts' shares — peers cannot tell that files came from different physical machines.</p>
+<p class="src-ref">Source: src/slskd/Shares/Types/Host.cs, src/slskd/Shares/ShareService.cs.</p>
+
+<h3 id="model-scan">Scan</h3>
+<p>Each scan writes a <code>Scan</code> record into the share database. It records the option set in effect, so the application can detect on the next start whether the configuration changed and a re-scan is required.</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>startedAt</code></td><td><span class="type">long</span></td><td>Unix epoch (milliseconds) when the scan began.</td></tr>
+<tr><td><code>optionsJson</code></td><td><span class="type">string</span></td><td>The serialized <code>shares</code> options at scan time. Compared against current options on init.</td></tr>
+<tr><td><code>endedAt</code></td><td><span class="type">long?</span></td><td>Unix epoch (ms) at completion; <code>null</code> if the scan did not finish.</td></tr>
+<tr><td><code>suspect</code></td><td><span class="type">bool</span></td><td>Marked <code>true</code> when a re-scan has been requested; forces a fresh scan on init.</td></tr>
+</tbody>
+</table>
+</div>
+<p class="src-ref">Source: src/slskd/Shares/Types/Scan.cs, src/slskd/Shares/ShareService.cs (<code>InitializeAsync</code>).</p>
+
+<h3 id="model-storagemode">StorageMode</h3>
+<p>The share cache is a SQLite database. <code>shares.cache.storage_mode</code> (CLI <code>--share-cache-storage-mode</code>, env <code>SLSKD_SHARE_CACHE_STORAGE_MODE</code>) selects where it lives. The option string is parsed into this enum.</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Value</th><th>Numeric</th><th>Behavior</th></tr></thead>
+<tbody>
+<tr><td><code>memory</code></td><td>0 (default)</td><td>SQLite in-memory database. Faster lookups, lower CPU/disk, higher RAM. On startup the cache is restored from an on-disk backup; if the backup is missing/invalid/stale, a full re-scan runs.</td></tr>
+<tr><td><code>disk</code></td><td>1</td><td>On-disk SQLite file. Lower memory, slower lookups, more I/O. On startup the on-disk file is validated; if invalid, it is restored from backup, otherwise a full re-scan runs.</td></tr>
+</tbody>
+</table>
+</div>
+<p>Changing <code>storage_mode</code> requires a restart (<code>[RequiresRestart]</code>). After every successful scan the cache is also backed up to a secondary database file regardless of mode.</p>
+<p class="src-ref">Source: src/slskd/Shares/Types/StorageMode.cs, src/slskd/Core/Options.cs (<code>ShareCacheOptions</code>), src/slskd/Shares/ShareService.cs.</p>
+
+<h2 id="scanning">Scanning &amp; the share cache</h2>
+<p>A scan enumerates every shared directory and file, reads audio/video metadata, and writes masked-path records into the SQLite cache. Scanning is I/O-intensive; <code>shares.cache.workers</code> (default <code>Environment.ProcessorCount</code>, range 1–128) controls how many files are processed concurrently.</p>
+
+<h3 id="scan-steps">Scan algorithm</h3>
+<ol>
+<li>Compile the <code>filters</code> regex list (case-insensitive unless <code>case_sensitive_regex</code> is set).</li>
+<li>Insert a new <code>Scan</code> record with the serialized options.</li>
+<li>For each non-excluded share, recursively enumerate subdirectories (skipping <em>Hidden</em> and <em>System</em> attributes, ignoring inaccessible paths), discarding directories matched by a filter; then add the share roots themselves.</li>
+<li>Remove directories that fall under any excluded share (a directory is excluded if its physical path <em>starts with</em> an excluded share's local path).</li>
+<li>For each surviving directory, insert a masked <em>directory</em> row, then enumerate its files (non-recursive, skipping hidden/system). Each file matched by a filter is counted as <em>filtered</em> and skipped; the rest are read into a <a href="data-model.html#file">Soulseek.File</a> and inserted as masked <em>file</em> rows.</li>
+<li>On completion, set <code>endedAt</code>, back up the cache database, and recompute per-share directory/file statistics.</li>
+</ol>
+
+<h3 id="scan-metadata">Metadata extraction</h3>
+<p>For files with a recognized audio or video extension, slskd uses TagLib to populate <a href="data-model.html#file">file attributes</a>. The attribute set and ordering deliberately mimic established clients:</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Codec class</th><th>Attributes emitted (in order)</th></tr></thead>
+<tbody>
+<tr><td>Lossy (BitsPerSample = 0)</td><td><code>BitRate</code>, <code>Length</code> (seconds), <code>VariableBitRate</code> (0/1)</td></tr>
+<tr><td>Lossless (BitsPerSample &gt; 0)</td><td><code>Length</code> (seconds), <code>SampleRate</code>, <code>BitDepth</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>Recognized audio extensions include <code>aa aax aac aiff ape dsf flac m4a m4b m4p mp3 mpc mpp ogg oga wav wma wv webm</code>; video includes <code>mkv ogv avi wmv asf mp4 m4p m4v mpg mpe mpv m2v</code>. Files of any other extension are shared with no attributes. Metadata read failures are logged and the file is still shared (attributes omitted).</p>
+<p class="src-ref">Source: src/slskd/Shares/ShareScanner.cs, src/slskd/Shares/SoulseekFileFactory.cs.</p>
+
+<h3 id="scan-state">Scan state (ShareState)</h3>
+<p>Scan progress is surfaced through application <a href="realtime-api.html">state</a> (broadcast over SignalR and available via the state API) under <code>shares</code>:</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>scanPending</code></td><td><span class="type">bool</span></td><td>A scan has been requested but not yet started (or the last scan faulted/was cancelled).</td></tr>
+<tr><td><code>scanning</code></td><td><span class="type">bool</span></td><td>A scan is currently in progress.</td></tr>
+<tr><td><code>ready</code></td><td><span class="type">bool</span></td><td>The cache is loaded and serviceable.</td></tr>
+<tr><td><code>faulted</code></td><td><span class="type">bool</span></td><td>The last scan faulted.</td></tr>
+<tr><td><code>cancelled</code></td><td><span class="type">bool</span></td><td>The last scan was cancelled.</td></tr>
+<tr><td><code>scanProgress</code></td><td><span class="type">double</span></td><td>Fractional progress in <code>[0,1]</code>.</td></tr>
+<tr><td><code>hosts</code></td><td><span class="type">string[]</span></td><td>Names of all share hosts (<code>local</code> plus any relay agents).</td></tr>
+<tr><td><code>directories</code></td><td><span class="type">int</span></td><td>Total shared directory count across all hosts.</td></tr>
+<tr><td><code>files</code></td><td><span class="type">int</span></td><td>Total shared file count across all hosts.</td></tr>
+</tbody>
+</table>
+</div>
+<p class="src-ref">Source: src/slskd/Core/State.cs (<code>ShareState</code>), src/slskd/Shares/ShareService.cs.</p>
+
+<h3 id="scan-triggers">When scans run</h3>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Trigger</th><th>Condition</th></tr></thead>
+<tbody>
+<tr><td>Startup (lazy)</td><td>The cache is validated on init; a scan runs only if the cache/backup is missing, corrupt, stale, suspect, or the <code>shares</code> options changed since the last scan.</td></tr>
+<tr><td><code>--force-share-scan</code> / <code>SLSKD_FORCE_SHARE_SCAN</code></td><td>Forces a full re-scan at startup.</td></tr>
+<tr><td><code>--no-share-scan</code> / <code>SLSKD_NO_SHARE_SCAN</code></td><td>Skips the startup scan.</td></tr>
+<tr><td>Retention timer</td><td>If <code>shares.cache.retention</code> (minutes, range 60+) is set, shares are re-scanned automatically once a scan older than the retention window is detected. Empty (default) disables automatic re-scan.</td></tr>
+<tr><td>Manual</td><td><span class="badge put">PUT</span> <code>/api/v0/shares</code> (see below).</td></tr>
+<tr><td>Options change</td><td>Editing <code>shares.directories</code> or <code>shares.filters</code> at runtime requests a re-scan.</td></tr>
+</tbody>
+</table>
+</div>
+<p class="src-ref">Source: src/slskd/Application.cs, src/slskd/Core/Options.cs, docs/config.md.</p>
+
+<h2 id="masking">Path masking &amp; virtual paths</h2>
+<p>Masking is the deterministic transform applied during the scan that converts a physical path into the path peers see. For a file under share <code>S</code>:</p>
+<pre><code>masked = original.ReplaceFirst(S.LocalPath, S.RemotePath).Replace('/', '\\')</code></pre>
+<p>Worked example (from the relay walkthrough), with share <code>/home/kubuntu/Music</code> aliased <code>Music</code>:</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Local path</th><th>Masked / wire path</th></tr></thead>
+<tbody>
+<tr><td><code>/home/kubuntu/Music/test/foo.txt</code></td><td><code>Music\test\foo.txt</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>The masked path is the SQLite primary key (<code>maskedFilename</code>) and the only path form transmitted on the wire. The reverse mapping (masked &rarr; local) is what <a href="#resolution">file resolution</a> performs when serving a download.</p>
+<p class="src-ref">Source: src/slskd/Shares/ShareScanner.cs, src/slskd/Shares/SqliteShareRepository.cs.</p>
+
+<h2 id="advertising">Advertising shares to the network</h2>
+<p>slskd advertises shares to the Soulseek server in two ways, which interoperating clients must replicate.</p>
+
+<h3 id="adv-counts">Aggregate counts (server message)</h3>
+<p>After login, after each scan, and whenever the share host set changes, slskd reports its total directory and file counts to the server. In Soulseek.NET this is <code>SetSharedCountsAsync(directories, files)</code>, which emits the server message <strong>SharedFoldersFiles</strong>.</p>
+<div class="msg-card">
+  <div class="msg-head"><span class="msg-code">Code 35</span> <strong>SharedFoldersFiles</strong> <span class="badge dir">Client &rarr; Server</span></div>
+  <p>Reports the number of shared folders and files. Payload: <span class="type">uint32</span> folder count, <span class="type">uint32</span> file count. These counts feed the per-user "files / folders" display other clients show, and the <a href="users-rooms.html">leecher detection</a> thresholds that gate uploads.</p>
+</div>
+<div class="note callout"><span class="label">Note</span><p>The message code <code>35</code> is the Soulseek server protocol code as implemented by Soulseek.NET; slskd does not construct the raw message itself. Verify the wire layout against <a href="soulseek-protocol.html">soulseek-protocol.html</a>.</p></div>
+<p class="src-ref">Source: src/slskd/Application.cs (<code>Client.SetSharedCountsAsync</code>).</p>
+
+<h3 id="adv-browse-cache">Browse-response warming</h3>
+<p>The full directory tree a peer receives when browsing is not built on demand for every request. After a scan (and on host add/remove), slskd builds the complete <code>BrowseResponse</code> once, serializes it to bytes, and writes it to <code>browse.cache</code> in the data directory. Incoming browse requests stream this pre-warmed file (as a <code>RawBrowseResponse</code>), avoiding per-request CPU. If the cache file is missing when a request arrives, it is rebuilt on the fly.</p>
+<p class="src-ref">Source: src/slskd/Application.cs (<code>CacheBrowseResponse</code>, <code>BrowseResponseResolver</code>).</p>
+
+<h3 id="adv-locked">Locked / private shares</h3>
+<p>The Soulseek browse protocol distinguishes ordinary directories from <em>locked</em> (private) directories. slskd's browse response is built entirely from the public directory list; it does not populate the locked-directory section of <code>BrowseResponse</code>. Blacklisted requesters receive an empty response instead (see below). <em>(Inferred from the absence of any locked-directory population in the resolver.)</em></p>
+
+<h2 id="browse-incoming">Browse &amp; directory listing (incoming)</h2>
+<p>Two peer-protocol requests let a remote user inspect your shares. slskd answers both from its share cache.</p>
+
+<h3 id="incoming-browse">Browse request (whole tree)</h3>
+<p>When a peer browses you, Soulseek.NET invokes slskd's browse resolver. The response is the warmed <code>browse.cache</code> file. Behavior:</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Requester</th><th>Response</th></tr></thead>
+<tbody>
+<tr><td>Allowed user</td><td>The full pre-warmed directory tree (union of all hosts' shares).</td></tr>
+<tr><td>Blacklisted user / IP</td><td>An empty <code>BrowseResponse</code> (no directories).</td></tr>
+</tbody>
+</table>
+</div>
+<p>The tree is constructed by <code>BrowseAsync</code>: every known directory is primed with an empty <a href="data-model.html#directory">Directory</a> entry (so directories containing only subdirectories still appear), then files are grouped by their normalized parent directory and merged in. Each file is sent with just its <em>filename</em> (not the full masked path) to save bandwidth.</p>
+
+<h3 id="incoming-dir">Directory-contents request (one directory)</h3>
+<p>A peer can also request the contents of a single directory by its masked path. slskd's directory resolver:</p>
+<ul>
+<li>Rejects paths containing traversal segments (<code>.</code> / <code>..</code>) — returns an empty list and logs a warning.</li>
+<li>Returns a single empty <a href="data-model.html#directory">Directory</a> for blacklisted requesters.</li>
+<li>Otherwise returns one <code>Directory</code> populated with the files in that masked directory (looked up across all hosts), filenames only.</li>
+</ul>
+<p class="src-ref">Source: src/slskd/Application.cs (<code>BrowseResponseResolver</code>, <code>DirectoryContentsResponseResolver</code>), src/slskd/Shares/ShareService.cs (<code>BrowseAsync</code>, <code>ListDirectoryAsync</code>).</p>
+
+<h2 id="browse-outgoing">Browsing another user (outgoing)</h2>
+<p>To browse a remote user's shares, drive the slskd <a href="users-rooms.html">Users API</a>. slskd issues the peer browse request through Soulseek.NET and returns the assembled directory tree.</p>
+
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/users/{username}/browse</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Retrieves the full directory tree shared by <code>{username}</code>. Returns an array of <a href="data-model.html#directory">Directory</a> (HTTP 200). Returns 404 if the user is offline (<code>UserOfflineException</code>) or blacklisted. Forbidden (403) when the instance is running as a <a href="relay.html">relay agent</a>.</p>
+
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/users/{username}/browse/status</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Returns the progress of an in-flight browse for <code>{username}</code> as a <span class="type">decimal</span> (HTTP 200), or 404 if no browse is tracked. Browse progress is tracked while the response transfers and the tracker entry is removed ~5 seconds after the browse completes. Forbidden (403) on a relay agent.</p>
+
+<h3 id="outgoing-shape">Browse response JSON shape</h3>
+<p>Both <code>/users/{username}/browse</code> and the local <code>/shares/contents</code> endpoints return the same shape: an array of directories, each with its masked name and a list of files. Field names are camelCase.</p>
+<pre><code>[
+  {
+    "name": "Music\\test",
+    "files": [
+      {
+        "code": 1,
+        "filename": "foo.txt",
+        "size": 1024,
+        "extension": "txt",
+        "attributes": []
+      }
+    ]
+  },
+  {
+    "name": "Music\\Albums\\Example",
+    "files": [
+      {
+        "code": 1,
+        "filename": "01 - Track.flac",
+        "size": 31457280,
+        "extension": "flac",
+        "attributes": [
+          { "type": 1, "value": 220 },
+          { "type": 4, "value": 44100 },
+          { "type": 5, "value": 16 }
+        ]
+      }
+    ]
+  }
+]</code></pre>
+<div class="note callout"><span class="label">Note</span><p>In a browse response the <code>filename</code> is just the leaf name; the containing directory is given by the parent <code>Directory.name</code>. In <em>search results</em> the <code>filename</code> is the full masked path. The <code>attributes[].type</code> codes are the <a href="data-model.html#file">FileAttributeType</a> enum (1 = BitRate, 2 = Length, 3 = VariableBitRate, 4 = SampleRate, 5 = BitDepth — verify against data-model.html).</p></div>
+<p class="src-ref">Source: src/slskd/Users/API/Controllers/UsersController.cs, src/web/src/lib/shares.js. See <a href="data-model.html#directory">data-model.html#directory</a> and <a href="data-model.html#file">data-model.html#file</a>.</p>
+
+<h2 id="shares-api">Shares REST API</h2>
+<p>The <code>SharesController</code> exposes the local share configuration, lets you browse your own shares, and controls scans. All endpoints require the <span class="badge role any">Any</span> policy.</p>
+
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/shares</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Lists all shares grouped by host. The response is an object keyed by host name, each value an array of <a href="#model-share">Share</a> objects.</p>
+<pre><code>{
+  "local": [
+    {
+      "id": "0f6e2c…",
+      "alias": "Music",
+      "isExcluded": false,
+      "localPath": "/home/me/Music",
+      "raw": "/home/me/Music",
+      "remotePath": "Music",
+      "directories": 42,
+      "files": 1337
+    }
+  ],
+  "example_agent": [ /* shares relayed from an agent host */ ]
+}</code></pre>
+
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/shares/{id}</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Returns the single <a href="#model-share">Share</a> whose <code>id</code> matches (searched across all hosts). 404 if not found.</p>
+
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/shares/contents</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Returns the entire local share tree as an array of <a href="data-model.html#directory">Directory</a> — the same structure a peer receives when browsing you. (<code>lib/shares.js</code>: <code>browseAll()</code>.)</p>
+
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/shares/{id}/contents</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Returns the contents of one share as an array of <a href="data-model.html#directory">Directory</a>, scoped to that share's <code>remotePath</code> prefix. 404 if the share id is unknown. (<code>lib/shares.js</code>: <code>browse({ id })</code>.)</p>
+
+<div class="endpoint"><span class="badge put">PUT</span><span class="path">/api/v0/shares</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Initiates a scan of the configured shares (fire-and-forget). Returns 200/204 on acceptance, or <strong>409 Conflict</strong> (<code>ShareScanInProgressException</code>) if a scan is already running. (<code>lib/shares.js</code>: <code>rescan()</code>.)</p>
+
+<div class="endpoint"><span class="badge delete">DELETE</span><span class="path">/api/v0/shares</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Cancels a running scan. Returns 204 if a scan was cancelled, or 404 if none was in progress. (<code>lib/shares.js</code>: <code>cancel()</code>.)</p>
+
+<div class="table-wrap">
+<table>
+<thead><tr><th>Method &amp; path</th><th>Returns</th><th>Notes</th></tr></thead>
+<tbody>
+<tr><td><span class="badge get">GET</span> <code>/api/v0/shares</code></td><td><code>{ host: Share[] }</code></td><td>Shares grouped by host.</td></tr>
+<tr><td><span class="badge get">GET</span> <code>/api/v0/shares/{id}</code></td><td><code>Share</code></td><td>404 if unknown.</td></tr>
+<tr><td><span class="badge get">GET</span> <code>/api/v0/shares/contents</code></td><td><code>Directory[]</code></td><td>Whole local tree.</td></tr>
+<tr><td><span class="badge get">GET</span> <code>/api/v0/shares/{id}/contents</code></td><td><code>Directory[]</code></td><td>One share's tree. 404 if unknown.</td></tr>
+<tr><td><span class="badge put">PUT</span> <code>/api/v0/shares</code></td><td>200/204</td><td>Start scan. 409 if already scanning.</td></tr>
+<tr><td><span class="badge delete">DELETE</span> <code>/api/v0/shares</code></td><td>204</td><td>Cancel scan. 404 if not scanning.</td></tr>
+</tbody>
+</table>
+</div>
+<p class="src-ref">Source: src/slskd/Shares/API/Controllers/SharesController.cs, src/web/src/lib/shares.js.</p>
+
+<h2 id="resolution">File resolution (download path)</h2>
+<p>When a peer requests a file (in a download/queue request), slskd receives the <em>masked</em> path and must map it back to a physical file to upload. This is <code>ResolveFileAsync(remoteFilename)</code>.</p>
+<ol>
+<li>Look up <code>remoteFilename</code> against the <strong>local</strong> host's repository: <code>SELECT originalFilename, size FROM files WHERE maskedFilename = @maskedFilename</code>. The match is an <em>exact</em> equality on the masked path (no prefix/LIKE matching).</li>
+<li>If found locally, return <code>(host = "local", localFilename, size)</code>.</li>
+<li>If not found locally, iterate <a href="relay.html">relay agent</a> hosts one by one, querying each host's repository, and return the first match as <code>(agentName, localFilename, size)</code>.</li>
+<li>If no host resolves the path, throw <code>NotFoundException</code> ("could not be resolved to a physical file").</li>
+</ol>
+<p>Logged resolution from the relay walkthrough:</p>
+<pre><code>[INF] Resolved Music\test\foo.txt to physical file /home/kubuntu/Music/test/foo.txt on host 'example_agent'</code></pre>
+<div class="warn callout"><span class="label">Security</span><p>Because resolution is an exact masked-path equality against the scanned cache, a peer cannot request an arbitrary local path: only files that were actually scanned and masked are resolvable, and only their recorded <code>originalFilename</code> is opened. The directory-contents resolver additionally rejects traversal segments. Clients implementing the native protocol should apply the same constraints.</p></div>
+<p class="src-ref">Source: src/slskd/Shares/ShareService.cs (<code>ResolveFileAsync</code>), src/slskd/Shares/SqliteShareRepository.cs (<code>FindFileInfo</code>), docs/relay.md.</p>
+
+<h2 id="relay">Relay hosts &amp; remote share databases</h2>
+<p>In a <a href="relay.html">relay</a> topology, an <em>agent</em> instance holds the physical files while a <em>controller</em> instance is connected to the Soulseek network. The agent scans its own shares locally, then uploads its entire SQLite share database to the controller. The controller registers the agent as an additional <a href="#model-host">Host</a>, merges the agent's directories and files into its browse response, and re-warms <code>browse.cache</code>.</p>
+<p>Controller-side log sequence when an agent connects:</p>
+<pre><code>[INF] Beginning download of shares to /tmp/slskd/share_example_….db
+[INF] Download of shares from example_agent complete (48.0 KB)
+[INF] Loading shares from agent example_agent
+[INF] Warming browse response cache...
+[INF] Shares from agent example_agent ready.
+[INF] Browse response cached successfully in 25ms</code></pre>
+<p>From this point, browse, search and directory-contents responses include the agent's files transparently, and <a href="#resolution">file resolution</a> for an agent-hosted path returns that agent's host name; the controller then requests the physical file stream from the agent over the relay channel (see <a href="relay.html">relay.html</a>).</p>
+<div class="note callout"><span class="label">Note</span><p>Browse and directory endpoints under <code>/users/{username}/...</code> are <strong>forbidden (403)</strong> when slskd runs as a relay agent — only the controller speaks to the network.</p></div>
+<p class="src-ref">Source: docs/relay.md, src/slskd/Shares/ShareService.cs (<code>AddOrUpdateHost</code>, <code>ResolveFileAsync</code>), src/slskd/Users/API/Controllers/UsersController.cs.</p>
+
+    <div class="page-nav-links">
+      <a class="prev" href="users-rooms.html"><span class="dir">&larr; Previous</span><br><span class="ttl">Users, Rooms &amp; Chat</span></a>
+      <a class="next" href="authentication.html"><span class="dir">Next &rarr;</span><br><span class="ttl">Authentication &amp; Security</span></a>
+    </div>
+    <footer class="page-footer">
+      <span>slskd / Soulseek Protocol &amp; Model Specification &middot; derived from source (slskd, Soulseek.NET 10.0.1) &middot; AGPL-3.0</span>
+      <span>Not an official Soulseek document.</span>
+    </footer>
+  </main>
+</div>
+</div>
+<script src="script.js"></script>
+</body>
+</html>

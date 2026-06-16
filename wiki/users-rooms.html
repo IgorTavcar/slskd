@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Users, Rooms &amp; Chat · slskd Protocol &amp; Model Specification</title>
+<meta name="description" content="slskd / Soulseek network, protocol and data-model specification — Users, Rooms &amp; Chat. A language-agnostic reference for building clients, apps and services that interoperate with the Soulseek platform.">
+<link rel="stylesheet" href="style.css">
+<script>(function(){try{var t=localStorage.getItem('slskd-spec-theme');if(t){document.documentElement.setAttribute('data-theme',t);}else if(window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches){document.documentElement.setAttribute('data-theme','dark');}}catch(e){}})();</script>
+</head>
+<body>
+<div class="scrim"></div>
+<div class="layout">
+<aside class="sidebar">
+  <div class="brand">
+    <div class="logo">sd</div>
+    <div class="brand-text">
+      <span class="brand-title">slskd Spec</span>
+      <span class="brand-sub">Soulseek protocol &amp; model</span>
+    </div>
+  </div>
+  <div class="nav-filter-wrap"><input class="nav-filter" type="text" placeholder="Filter pages…" aria-label="Filter pages"></div>
+  <nav>
+  <div class="nav-group-label">Introduction</div>
+  <ul>
+    <li><a href="index.html"><span class="nav-num">1</span><span>Overview</span></a></li>
+    <li><a href="architecture.html"><span class="nav-num">2</span><span>Architecture &amp; Concepts</span></a></li>
+  </ul>
+  <div class="nav-group-label">The Soulseek Network</div>
+  <ul>
+    <li><a href="soulseek-protocol.html"><span class="nav-num">3</span><span>Soulseek Wire Protocol</span></a></li>
+    <li><a href="data-model.html"><span class="nav-num">4</span><span>Data Model &amp; Types</span></a></li>
+  </ul>
+  <div class="nav-group-label">Domains</div>
+  <ul>
+    <li><a href="search.html"><span class="nav-num">5</span><span>Search</span></a></li>
+    <li><a href="transfers.html"><span class="nav-num">6</span><span>Transfers &amp; Queueing</span></a></li>
+    <li class="active"><a href="users-rooms.html" aria-current="page"><span class="nav-num">7</span><span>Users, Rooms &amp; Chat</span></a></li>
+    <li><a href="shares.html"><span class="nav-num">8</span><span>Shares &amp; Browsing</span></a></li>
+  </ul>
+  <div class="nav-group-label">Integration</div>
+  <ul>
+    <li><a href="authentication.html"><span class="nav-num">9</span><span>Authentication &amp; Security</span></a></li>
+    <li><a href="rest-api.html"><span class="nav-num">10</span><span>REST API Reference</span></a></li>
+    <li><a href="realtime-api.html"><span class="nav-num">11</span><span>Real-Time API &amp; Events</span></a></li>
+    <li><a href="relay.html"><span class="nav-num">12</span><span>Relay Protocol</span></a></li>
+  </ul>
+</nav>
+</aside>
+<div class="main-col">
+  <header class="topbar">
+    <button class="menu-btn" aria-label="Toggle navigation">&#9776;</button>
+    <span class="crumb">Domains / <b>Users, Rooms &amp; Chat</b></span>
+    <span class="spacer"></span>
+    <a class="tb-link" href="index.html#sitemap">Contents</a>
+    <a class="tb-link" href="https://github.com/slskd/slskd" target="_blank" rel="noopener">GitHub</a>
+    <button class="theme-toggle" aria-label="Toggle dark mode" title="Toggle theme">◐</button>
+  </header>
+  <main class="content">
+
+<h1>Users, Rooms &amp; Chat</h1>
+<p class="page-lede">People and messaging on the Soulseek network: querying another user's profile, statistics, presence and IP endpoint; browsing their shares; joining and chatting in public and private rooms with tickers and operators; and exchanging private messages with per-message acknowledgement. This page documents the slskd REST surface (<code>UsersController</code>, <code>RoomsController</code>, <code>ConversationsController</code>), the DTOs they emit, and the underlying Soulseek server messages those operations map to.</p>
+
+<nav class="toc">
+  <div class="toc-title">On this page</div>
+  <ul>
+    <li><a href="#conventions">Conventions &amp; serialization</a></li>
+    <li><a href="#users">Users</a>
+      <ul>
+        <li><a href="#user-models">User, Status, Statistics, Info</a></li>
+        <li><a href="#user-presence">Presence &amp; privileged flag</a></li>
+        <li><a href="#user-endpoints">User endpoints</a></li>
+        <li><a href="#watching">Watching &amp; presence tracking</a></li>
+      </ul>
+    </li>
+    <li><a href="#rooms">Rooms</a>
+      <ul>
+        <li><a href="#room-models">Room data model</a></li>
+        <li><a href="#room-endpoints">Room endpoints</a></li>
+        <li><a href="#tickers-private">Tickers, private &amp; owned rooms</a></li>
+      </ul>
+    </li>
+    <li><a href="#conversations">Private chat (conversations)</a>
+      <ul>
+        <li><a href="#conversation-models">Conversation &amp; PrivateMessage</a></li>
+        <li><a href="#conversation-endpoints">Conversation endpoints</a></li>
+        <li><a href="#ack">Acknowledgement semantics</a></li>
+      </ul>
+    </li>
+    <li><a href="#wire">Server message mapping</a></li>
+    <li><a href="#realtime">Real-time updates</a></li>
+  </ul>
+</nav>
+
+<h2 id="conventions">Conventions &amp; serialization</h2>
+<p>All endpoints on this page are versioned under <code>/api/v0</code> and require a bearer token. They are declared with <code>[Authorize(Policy = AuthPolicy.Any)]</code>, so any authenticated role satisfies them <span class="badge role any">Any</span>. When the daemon is running as a <a href="relay.html">relay agent</a> (<code>Program.IsRelayAgent</code>), every action on these controllers returns <span class="type">403 Forbidden</span> — users, rooms and chat are controller-only on the controller node.</p>
+
+<div class="table-wrap"><table>
+<thead><tr><th>Concern</th><th>Behavior</th></tr></thead>
+<tbody>
+<tr><td>Property naming</td><td>JSON bodies use <strong>camelCase</strong> (ASP.NET Core default). A C# property <code>UploadCount</code> serializes as <code>uploadCount</code>.</td></tr>
+<tr><td>Enums</td><td>Serialized as <strong>PascalCase strings</strong> via <code>JsonStringEnumConverter</code> — e.g. <code>"Online"</code>, <code>"Out"</code>, not numbers.</td></tr>
+<tr><td>Null fields</td><td><code>DefaultIgnoreCondition = WhenWritingNull</code>. Nullable properties that are null (e.g. <code>self</code>, <code>slotsFree</code>, <code>operatorCount</code>, <code>owner</code>) are <strong>omitted</strong> from output entirely.</td></tr>
+<tr><td>Path parameters</td><td><code>{username}</code> and <code>{roomName}</code> are <code>[UrlEncoded]</code>; clients must percent-encode them. The reference web client uses <code>encodeURIComponent</code>.</td></tr>
+<tr><td>Message bodies</td><td><code>POST</code> of a single message or room/username string is sent as a JSON-encoded string (e.g. body literally <code>"hello world"</code> including the quotes), bound with <code>[FromBody] string</code>.</td></tr>
+</tbody>
+</table></div>
+<p class="src-ref">Source: src/slskd/Program.cs (AddJsonOptions); src/web/src/lib/{users,rooms,chat}.js</p>
+
+<h2 id="users">Users</h2>
+<p>The Users domain exposes read-only information about other peers on the network. Behind each call slskd asks the Soulseek server or the peer directly, caches the result, and (for status/statistics) keeps it fresh by "watching" the user server-side. Blacklisted usernames are treated as <span class="type">404 Not Found</span> by every <code>UsersController</code> action (and as a silent no-op by private messaging — see <a href="#ack">below</a>).</p>
+
+<h3 id="user-models">User, Status, Statistics, Info</h3>
+<p>The composite <a href="data-model.html#user"><code>User</code></a> record aggregates the per-user data slskd caches. It is not returned directly by the user endpoints below (which return the individual <code>Info</code> / <code>Status</code> sub-objects), but it is what appears in the application <a href="#realtime">state</a> under <code>users[]</code>.</p>
+
+<div class="table-wrap"><table>
+<thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>username</code></td><td><span class="type">string</span></td><td>The peer's username.</td></tr>
+<tr><td><code>group</code></td><td><span class="type">string</span></td><td>The user's <em>configured</em> group (from config), not the runtime-derived group. See <a href="transfers.html">Transfers</a> for how groups affect upload queueing.</td></tr>
+<tr><td><code>statistics</code></td><td><span class="type">Statistics</span></td><td>Share counts and average speed (below).</td></tr>
+<tr><td><code>status</code></td><td><span class="type">Status</span></td><td>Presence and privileged flag (below).</td></tr>
+</tbody>
+</table></div>
+<p class="src-ref">Source: src/slskd/Users/Types/User.cs</p>
+
+<p><strong><code>Status</code></strong> — returned by <code>GET /users/{username}/status</code>.</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>isPrivileged</code></td><td><span class="type">bool</span></td><td>Whether the user holds Soulseek privileges (donor status — affects upload-queue priority).</td></tr>
+<tr><td><code>presence</code></td><td><span class="type">UserPresence</span></td><td>One of <code>"Offline"</code>, <code>"Away"</code>, <code>"Online"</code>. See <a href="#user-presence">Presence</a>.</td></tr>
+</tbody>
+</table></div>
+<p class="src-ref">Source: src/slskd/Users/Types/Status.cs</p>
+
+<p><strong><code>Statistics</code></strong> — embedded in <code>User</code>; obtained via the watch mechanism / <code>GetStatisticsAsync</code>.</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>averageSpeed</code></td><td><span class="type">int32</span></td><td>The user's average upload speed (bytes/sec, as reported by the server).</td></tr>
+<tr><td><code>directoryCount</code></td><td><span class="type">int32</span></td><td>Number of directories the user shares.</td></tr>
+<tr><td><code>fileCount</code></td><td><span class="type">int32</span></td><td>Number of files the user shares.</td></tr>
+<tr><td><code>uploadCount</code></td><td><span class="type">int64</span></td><td>Number of uploads the server has tracked for this user.</td></tr>
+</tbody>
+</table></div>
+<p class="src-ref">Source: src/slskd/Users/Types/Statistics.cs</p>
+
+<p><strong><code>Info</code></strong> — returned by <code>GET /users/{username}/info</code>. This is the peer's self-reported profile, fetched directly from the peer (a peer <em>UserInfoRequest</em>), not from the server.</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>description</code></td><td><span class="type">string</span></td><td>The user's free-text profile/"about" text.</td></tr>
+<tr><td><code>hasFreeUploadSlot</code></td><td><span class="type">bool</span></td><td>Whether the user currently advertises a free upload slot.</td></tr>
+<tr><td><code>hasPicture</code></td><td><span class="type">bool</span></td><td>Whether a profile picture is present.</td></tr>
+<tr><td><code>picture</code></td><td><span class="type">byte[]</span></td><td>Raw image bytes (Base64-encoded in JSON), if <code>hasPicture</code>.</td></tr>
+<tr><td><code>queueLength</code></td><td><span class="type">int32</span></td><td>The user's current upload-queue length.</td></tr>
+<tr><td><code>uploadSlots</code></td><td><span class="type">int32</span></td><td>The user's total number of upload slots.</td></tr>
+</tbody>
+</table></div>
+<p class="src-ref">Source: src/slskd/Users/Types/Info.cs</p>
+
+<pre><code>// GET /api/v0/users/RJ/info  →  200
+{
+  "description": "i mostly share jazz",
+  "hasFreeUploadSlot": false,
+  "hasPicture": true,
+  "picture": "iVBORw0KGgoAAAANSUhEUgAA...",
+  "queueLength": 3,
+  "uploadSlots": 2
+}
+
+// GET /api/v0/users/RJ/status  →  200
+{
+  "isPrivileged": false,
+  "presence": "Online"
+}</code></pre>
+
+<h3 id="user-presence">Presence &amp; the privileged flag</h3>
+<p><code>UserPresence</code> (from Soulseek.NET) is a three-state enum. slskd surfaces it as a string in <code>Status.presence</code> and as <code>status</code> on room user lists. The underlying integer values follow the Soulseek server's status code (documented inline on <code>UserDataResponse.Status</code> as "0 = offline, 1 = away, 2 = online"), but on the wire of the slskd API the value is always the string form.</p>
+<div class="table-wrap"><table>
+<thead><tr><th>String value</th><th>Server code</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>"Offline"</code></td><td><span class="type">0</span></td><td>User is not connected to the server.</td></tr>
+<tr><td><code>"Away"</code></td><td><span class="type">1</span></td><td>User is online but marked away.</td></tr>
+<tr><td><code>"Online"</code></td><td><span class="type">2</span></td><td>User is online and active.</td></tr>
+</tbody>
+</table></div>
+<div class="note callout"><span class="label">Note</span><p>The integer-to-string mapping (0/1/2) is taken from the documenting comment on <code>UserDataResponse.Status</code>. The enum itself is defined in Soulseek.NET, not in this repository. The privileged flag (<code>isPrivileged</code>) is independent of presence and reflects whether the server considers the user a privileged (donor) member.</p></div>
+<p class="src-ref">Source: src/slskd/Messaging/API/DTO/UserDataResponse.cs; src/web/src/components/Users/User.jsx, src/web/src/components/Rooms/RoomUserList.jsx</p>
+
+<h3 id="user-endpoints">User endpoints</h3>
+
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/users/{username}/info</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Returns the peer's <a href="#user-models"><code>Info</code></a> (profile, slots, queue length). Requires a direct peer connection. <span class="type">404</span> if the user is offline (<code>UserOfflineException</code>) or blacklisted.</p>
+
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/users/{username}/status</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Returns the peer's <a href="#user-models"><code>Status</code></a> (presence + privileged). Resolved from the server and cached. <span class="type">404</span> if offline/blacklisted.</p>
+
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/users/{username}/endpoint</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Returns the peer's IP endpoint as an <code>IPEndPoint</code> — the address and listen port the server has on file for that user. Serialized through a custom <code>IPAddressConverter</code>. <span class="type">404</span> if offline/blacklisted.</p>
+<pre><code>// GET /api/v0/users/RJ/endpoint  →  200
+{
+  "address": "203.0.113.7",
+  "port": 2234
+}</code></pre>
+
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/users/{username}/browse</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Browses the user's entire shared file tree. slskd opens a peer connection and issues a <em>SharesRequest</em>; the peer responds with its full browse response. Returns an array of <code>Directory</code> objects (see <a href="data-model.html#directory">Data Model</a> and <a href="shares.html#browse-outgoing">Shares &amp; Browsing</a>). The progress of an in-flight browse is tracked by <code>BrowseTracker</code> and cleared 5 seconds after completion. <span class="type">404</span> if offline/blacklisted.</p>
+<pre><code>// GET /api/v0/users/RJ/browse  →  200  (abbreviated)
+[
+  {
+    "name": "@@abcde\\Music\\Jazz",
+    "fileCount": 2,
+    "files": [
+      { "filename": "01 - Take Five.mp3", "size": 8123456, "extension": ".mp3", "attributes": [ ... ] },
+      { "filename": "02 - Blue Rondo.mp3", "size": 9011234, "extension": ".mp3", "attributes": [ ... ] }
+    ]
+  }
+]</code></pre>
+
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/users/{username}/browse/status</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Returns the progress (a <span class="type">decimal</span>, 0–100) of an <em>in-progress</em> browse of the user, from <code>BrowseTracker</code>. <span class="type">404</span> when no browse is currently tracked for that user.</p>
+
+<div class="endpoint"><span class="badge post">POST</span><span class="path">/api/v0/users/{username}/directory</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Requests the contents of a <em>single</em> directory from the peer (a peer <em>FolderContentsRequest</em>) rather than the whole tree. Returns an array of <code>Directory</code>. Use this for lazy/on-demand folder expansion when a full browse is too large.</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Body field</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>directory</code></td><td><span class="type">string</span></td><td>yes</td><td>The full remote directory path to enumerate. Empty/null → <span class="type">400 Bad Request</span>.</td></tr>
+</tbody>
+</table></div>
+<pre><code>// POST /api/v0/users/RJ/directory
+{ "directory": "@@abcde\\Music\\Jazz" }
+//  →  200  (array of Directory, same shape as /browse)</code></pre>
+<p class="src-ref">Source: src/slskd/Users/API/Controllers/UsersController.cs; src/slskd/Users/API/DTO/DirectoryContentsRequest.cs; src/web/src/lib/users.js</p>
+
+<h3 id="watching">Watching &amp; presence tracking</h3>
+<p>slskd maintains a non-expiring per-user cache (<code>UserService.UserDictionary</code>) of statistics, status and group, plus a <code>WatchedUsernames</code> set of users that have been registered server-side for live updates. The relationship matters for any interoperating client that wants fresh presence:</p>
+<ul>
+<li><strong>Watched</strong> users receive push updates from the server when their status changes; cached data for them is assumed current.</li>
+<li>Watching is performed with <code>WatchUserAsync</code> (server <em>WatchUser</em>). The Soulseek server does <em>not</em> automatically send status and statistics on initial watch, so slskd explicitly fetches both before reporting the user as watched (<code>IsWatched</code> stays false until populated).</li>
+<li>Watching is idempotent; repeated calls only refresh status/statistics.</li>
+<li>The cache grows monotonically over a session — a deliberate trade-off so that group, speed and presence are available on hot paths (queueing, governors) without a round trip.</li>
+</ul>
+<div class="note callout"><span class="label">Note</span><p>There is no public REST endpoint that adds a watch directly; watching is a side effect of the daemon's own operations (e.g. tracking transfer counterparties, room members). The <code>users[]</code> array in application <a href="#realtime">state</a> reflects the current tracked set.</p></div>
+<p class="src-ref">Source: src/slskd/Users/IUserService.cs; src/slskd/Users/UserService.cs</p>
+
+<h2 id="rooms">Rooms</h2>
+<p>Rooms are server-hosted chat channels. A client lists rooms advertised by the server, joins (which makes the server start streaming that room's messages and membership), reads cached messages/members, sends messages, sets a ticker, and for private rooms manages membership. slskd tracks every joined room in <code>RoomTracker</code>; the controller reads from that tracker rather than re-querying the server on each request.</p>
+
+<h3 id="room-models">Room data model</h3>
+<p><strong><code>RoomInfoResponse</code></strong> — element of <code>GET /rooms/available</code>. Describes a room <em>offered</em> by the server (not yet joined).</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>name</code></td><td><span class="type">string</span></td><td>Room name.</td></tr>
+<tr><td><code>userCount</code></td><td><span class="type">int32</span></td><td>Number of users currently in the room.</td></tr>
+<tr><td><code>isPrivate</code></td><td><span class="type">bool</span></td><td>True for rooms drawn from the server's private/owned lists.</td></tr>
+<tr><td><code>isOwned</code></td><td><span class="type">bool</span></td><td>True for rooms the logged-in user owns (private + owner).</td></tr>
+<tr><td><code>isModerated</code></td><td><span class="type">bool</span></td><td>True if the room name is in the server's moderated-room list.</td></tr>
+</tbody>
+</table></div>
+<p class="src-ref">Source: src/slskd/Messaging/API/DTO/RoomInfoResponse.cs</p>
+
+<p><strong><code>RoomResponse</code></strong> — returned by <code>GET /rooms/joined/{roomName}</code> and on a successful join. Describes a <em>joined</em> room, including its cached membership and message history.</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>name</code></td><td><span class="type">string</span></td><td>Room name.</td></tr>
+<tr><td><code>isPrivate</code></td><td><span class="type">bool</span></td><td>Whether the room is private.</td></tr>
+<tr><td><code>operatorCount</code></td><td><span class="type">int32?</span></td><td>Number of operators (private rooms only; omitted if null).</td></tr>
+<tr><td><code>operators</code></td><td><span class="type">string[]</span></td><td>Operator usernames (private rooms only; omitted if null).</td></tr>
+<tr><td><code>owner</code></td><td><span class="type">string</span></td><td>Owner username (private rooms only; omitted if null).</td></tr>
+<tr><td><code>users</code></td><td><span class="type">UserDataResponse[]</span></td><td>Current members (below).</td></tr>
+<tr><td><code>messages</code></td><td><span class="type">RoomMessageResponse[]</span></td><td>Cached message history collected since joining (below).</td></tr>
+</tbody>
+</table></div>
+<p class="src-ref">Source: src/slskd/Messaging/API/DTO/RoomResponse.cs; src/slskd/Messaging/Types/Room.cs</p>
+
+<p><strong><code>UserDataResponse</code></strong> — a room member (also used for the room user list endpoint).</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>username</code></td><td><span class="type">string</span></td><td>Member username.</td></tr>
+<tr><td><code>status</code></td><td><span class="type">UserPresence</span></td><td>Presence string (<code>"Offline"</code>/<code>"Away"</code>/<code>"Online"</code>).</td></tr>
+<tr><td><code>averageSpeed</code></td><td><span class="type">int32</span></td><td>Average upload speed.</td></tr>
+<tr><td><code>directoryCount</code></td><td><span class="type">int32</span></td><td>Shared directory count.</td></tr>
+<tr><td><code>fileCount</code></td><td><span class="type">int32</span></td><td>Shared file count.</td></tr>
+<tr><td><code>uploadCount</code></td><td><span class="type">int64</span></td><td>Server-tracked upload count.</td></tr>
+<tr><td><code>countryCode</code></td><td><span class="type">string</span></td><td>Country code, if the server provided one.</td></tr>
+<tr><td><code>slotsFree</code></td><td><span class="type">int32?</span></td><td>Free download slots, if provided (omitted if null).</td></tr>
+<tr><td><code>self</code></td><td><span class="type">bool?</span></td><td><code>true</code> only when this entry is the logged-in user; otherwise omitted (set to null).</td></tr>
+</tbody>
+</table></div>
+<p class="src-ref">Source: src/slskd/Messaging/API/DTO/UserDataResponse.cs (also mirrored at src/slskd/Users/API/DTO/UserDataResponse.cs)</p>
+
+<p><strong><code>RoomMessageResponse</code></strong> — a single room message.</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>timestamp</code></td><td><span class="type">datetime</span></td><td>UTC time the message was received/recorded.</td></tr>
+<tr><td><code>username</code></td><td><span class="type">string</span></td><td>Sender's username.</td></tr>
+<tr><td><code>message</code></td><td><span class="type">string</span></td><td>Message text.</td></tr>
+<tr><td><code>roomName</code></td><td><span class="type">string</span></td><td>Room the message belongs to.</td></tr>
+<tr><td><code>self</code></td><td><span class="type">bool?</span></td><td><code>true</code> when sent by the logged-in user; otherwise omitted.</td></tr>
+</tbody>
+</table></div>
+<p class="src-ref">Source: src/slskd/Messaging/API/DTO/RoomMessageResponse.cs; src/slskd/Messaging/Types/RoomMessage.cs</p>
+
+<pre><code>// GET /api/v0/rooms/joined/nicotine  →  200  (abbreviated)
+{
+  "name": "nicotine",
+  "isPrivate": false,
+  "users": [
+    { "username": "RJ", "status": "Online", "averageSpeed": 51200, "fileCount": 12044, "directoryCount": 318, "uploadCount": 99213 },
+    { "username": "me", "status": "Online", "averageSpeed": 0, "fileCount": 80, "directoryCount": 4, "uploadCount": 0, "self": true }
+  ],
+  "messages": [
+    { "timestamp": "2026-06-16T12:00:01.2Z", "username": "RJ", "message": "hi all", "roomName": "nicotine" },
+    { "timestamp": "2026-06-16T12:00:09.7Z", "username": "me", "message": "hey", "roomName": "nicotine", "self": true }
+  ]
+}</code></pre>
+
+<h3 id="room-endpoints">Room endpoints</h3>
+
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/rooms/available</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Queries the server's room list (<code>GetRoomListAsync</code>) and returns a flat array of <code>RoomInfoResponse</code>. The server returns three buckets — public, private, and owned — which slskd flattens, tagging private rooms with <code>isPrivate</code> and owned rooms with <code>isOwned</code>. Each entry's <code>isModerated</code> is set from the server's moderated-room-names list.</p>
+
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/rooms/joined</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Returns the array of room <strong>names</strong> currently joined (the keys of <code>RoomTracker.Rooms</code>) — a <code>string[]</code>, not full room objects. Fetch a specific room's detail with the next endpoint.</p>
+
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/rooms/joined/{roomName}</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Returns the full <code>RoomResponse</code> for one joined room (membership + message history). <span class="type">404</span> if not joined.</p>
+
+<div class="endpoint"><span class="badge post">POST</span><span class="path">/api/v0/rooms/joined</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Joins a room. Body is the room name as a JSON string. Returns <span class="type">201 Created</span> with the new <code>RoomResponse</code>. If already joined, returns <span class="type">200 OK</span> (documented as 304 in source attributes but implemented as <code>Ok()</code>). If the server rejects the join (<code>RoomJoinForbiddenException</code>, e.g. a private room you are not a member of), returns <span class="type">403 Forbidden</span> with an explanatory message.</p>
+<pre><code>// POST /api/v0/rooms/joined
+"nicotine"
+//  →  201  (RoomResponse)</code></pre>
+
+<div class="endpoint"><span class="badge delete">DELETE</span><span class="path">/api/v0/rooms/joined/{roomName}</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Leaves a room and removes it from the tracker. <span class="type">204 No Content</span> on success, <span class="type">404</span> if the room was not joined.</p>
+
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/rooms/joined/{roomName}/users</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Returns the current member list as an array of <code>UserDataResponse</code>. The logged-in user's own entry carries <code>self: true</code>. <span class="type">404</span> if not joined.</p>
+
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/rooms/joined/{roomName}/messages</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Returns the cached message history (array of <code>RoomMessageResponse</code>) accumulated since the room was joined. The history is in-memory and starts empty at join time. <span class="type">404</span> if not joined.</p>
+
+<div class="endpoint"><span class="badge post">POST</span><span class="path">/api/v0/rooms/joined/{roomName}/messages</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Sends a chat message to the room (<code>SendRoomMessageAsync</code>). Body is the message as a JSON string. <span class="type">201 Created</span> on success, <span class="type">404</span> if not joined.</p>
+<pre><code>// POST /api/v0/rooms/joined/nicotine/messages
+"hello everyone"
+//  →  201</code></pre>
+
+<div class="endpoint"><span class="badge post">POST</span><span class="path">/api/v0/rooms/joined/{roomName}/ticker</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Sets the room ticker (<code>SetRoomTickerAsync</code>). Body is the ticker text as a JSON string. <span class="type">201 Created</span>, <span class="type">404</span> if not joined. See <a href="#tickers-private">Tickers</a>.</p>
+
+<div class="endpoint"><span class="badge post">POST</span><span class="path">/api/v0/rooms/joined/{roomName}/members</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Adds a member to a <em>private</em> room you own/operate (<code>AddPrivateRoomMemberAsync</code>). Body is the username to add, as a JSON string. <span class="type">201 Created</span>, <span class="type">404</span> if the room is not joined. The server enforces ownership/operator authority; an unauthorized request will be rejected at the protocol layer.</p>
+<p class="src-ref">Source: src/slskd/Messaging/API/Controllers/RoomsController.cs; src/web/src/lib/rooms.js</p>
+
+<h3 id="tickers-private">Tickers, private &amp; owned rooms, operators</h3>
+<div class="table-wrap"><table>
+<thead><tr><th>Concept</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>Ticker</td><td>A short room-wide status/banner line stored by the server and shown to all members. Set via the <code>/ticker</code> endpoint. Ticker text is a single string; setting it replaces the previous value for the setter.</td></tr>
+<tr><td>Public room</td><td><code>isPrivate = false</code>. Anyone may join. No owner, operators or member list management.</td></tr>
+<tr><td>Private room</td><td><code>isPrivate = true</code>. Membership is controlled. Only members may join; non-members get <span class="type">403</span> on join. Has an <code>owner</code> and a set of <code>operators</code>.</td></tr>
+<tr><td>Owned room</td><td>A private room whose owner is the logged-in user (<code>isOwned = true</code> in the available list). The owner can add members (<code>/members</code>) and appoint operators.</td></tr>
+<tr><td>Operators</td><td>Users with elevated rights in a private room. Reported in <code>operators[]</code> with an <code>operatorCount</code>. Operator/owner appointment beyond "add member" is a server-side concern not surfaced as distinct slskd endpoints.</td></tr>
+<tr><td>Moderated room</td><td><code>isModerated = true</code> when the room name is in the server's moderated-room list for the logged-in user.</td></tr>
+</tbody>
+</table></div>
+<div class="note callout"><span class="label">Note</span><p><code>operatorCount</code>, <code>operators</code> and <code>owner</code> are populated only for private rooms; for public rooms they are null and therefore omitted from the JSON.</p></div>
+
+<h2 id="conversations">Private chat (conversations)</h2>
+<p>A <em>conversation</em> is slskd's persistent, per-user thread of private messages. Unlike room history (in-memory), private messages are stored in a SQLite database (<code>MessagingDbContext</code>), survive restarts, and carry an acknowledgement state. Inbound messages map to the server's <em>private message</em> delivery; outbound messages are sent and recorded locally.</p>
+
+<h3 id="conversation-models">Conversation &amp; PrivateMessage</h3>
+<p><strong><code>Conversation</code></strong> — one thread with one remote user.</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>username</code></td><td><span class="type">string</span></td><td>The remote user.</td></tr>
+<tr><td><code>isActive</code></td><td><span class="type">bool</span></td><td>Whether the conversation is "open". Defaults to true; set false by deletion. Inactive conversations are hidden from the default listing.</td></tr>
+<tr><td><code>unAcknowledgedMessageCount</code></td><td><span class="type">int32</span></td><td>Number of inbound messages not yet acknowledged.</td></tr>
+<tr><td><code>hasUnAcknowledgedMessages</code></td><td><span class="type">bool</span></td><td>Computed: <code>unAcknowledgedMessageCount &gt; 0</code>.</td></tr>
+<tr><td><code>messages</code></td><td><span class="type">PrivateMessage[]</span></td><td>The thread's messages (included by default; can be suppressed).</td></tr>
+</tbody>
+</table></div>
+<p class="src-ref">Source: src/slskd/Messaging/Types/Conversation.cs</p>
+
+<p><strong><code>PrivateMessage</code></strong> — one private message.</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>id</code></td><td><span class="type">int32</span></td><td>The server-assigned message id, used to acknowledge receipt. Inbound messages carry the server's id; <strong>outbound</strong> messages are stored with <code>id = 0</code> (the recipient's server assigns the real id, which is never reported back to the sender).</td></tr>
+<tr><td><code>timestamp</code></td><td><span class="type">datetime</span></td><td>UTC timestamp (from the server for inbound; <code>DateTime.UtcNow</code> for outbound).</td></tr>
+<tr><td><code>username</code></td><td><span class="type">string</span></td><td>The remote user (counterparty), regardless of direction.</td></tr>
+<tr><td><code>direction</code></td><td><span class="type">MessageDirection</span></td><td><code>"In"</code> (received) or <code>"Out"</code> (sent). See below.</td></tr>
+<tr><td><code>message</code></td><td><span class="type">string</span></td><td>Message text.</td></tr>
+<tr><td><code>isAcknowledged</code></td><td><span class="type">bool</span></td><td>Whether receipt has been acknowledged. Outbound messages are stored already-acknowledged (<code>true</code>); inbound start <code>false</code>.</td></tr>
+<tr><td><code>wasReplayed</code></td><td><span class="type">bool</span></td><td><code>true</code> when the server replayed the message on login (i.e. it was queued while offline) rather than delivering it live.</td></tr>
+</tbody>
+</table></div>
+<p class="src-ref">Source: src/slskd/Messaging/Types/PrivateMessage.cs; src/slskd/Messaging/ConversationService.cs</p>
+
+<p><strong><code>MessageDirection</code></strong> enum:</p>
+<div class="table-wrap"><table>
+<thead><tr><th>String value</th><th>Int</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>"Out"</code></td><td><span class="type">0</span></td><td>Sent by the local user.</td></tr>
+<tr><td><code>"In"</code></td><td><span class="type">1</span></td><td>Received from the remote user.</td></tr>
+</tbody>
+</table></div>
+<p class="src-ref">Source: src/slskd/Messaging/Types/MessageDirection.cs</p>
+
+<pre><code>// GET /api/v0/conversations/RJ  →  200
+{
+  "username": "RJ",
+  "isActive": true,
+  "unAcknowledgedMessageCount": 1,
+  "hasUnAcknowledgedMessages": true,
+  "messages": [
+    { "id": 4127, "timestamp": "2026-06-16T11:58:00Z", "username": "RJ", "direction": "In",  "message": "got that album?", "isAcknowledged": false, "wasReplayed": false },
+    { "id": 0,    "timestamp": "2026-06-16T11:59:10Z", "username": "RJ", "direction": "Out", "message": "yes, queuing now", "isAcknowledged": true,  "wasReplayed": false }
+  ]
+}</code></pre>
+
+<h3 id="conversation-endpoints">Conversation endpoints</h3>
+
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/conversations</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Lists conversations. Query parameters:</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Query param</th><th>Type</th><th>Default</th><th>Effect</th></tr></thead>
+<tbody>
+<tr><td><code>includeInactive</code></td><td><span class="type">bool</span></td><td><code>false</code></td><td>When false, only <code>isActive</code> conversations are returned.</td></tr>
+<tr><td><code>unAcknowledgedOnly</code></td><td><span class="type">bool</span></td><td><code>false</code></td><td>When true, only conversations with unacknowledged messages are returned.</td></tr>
+</tbody>
+</table></div>
+<p>Returns an array of <code>Conversation</code>.</p>
+
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/conversations/{username}</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Returns one <code>Conversation</code>. Query param <code>includeMessages</code> (<span class="type">bool</span>, default <code>true</code>) toggles inclusion of the <code>messages[]</code> array. <span class="type">404</span> if no such conversation.</p>
+
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/conversations/{username}/messages</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Returns just the message array (<code>PrivateMessage[]</code>) for a conversation. Query param <code>unAcknowledgedOnly</code> (default <code>false</code>) filters to messages where <code>isAcknowledged == false</code>. <span class="type">404</span> if no such conversation.</p>
+
+<div class="endpoint"><span class="badge post">POST</span><span class="path">/api/v0/conversations/{username}</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Sends a private message. Body is the message as a JSON string. On success the message is sent over the network (<code>SendPrivateMessageAsync</code>) and stored locally as an outbound, already-acknowledged record. Returns <span class="type">201 Created</span>. An empty/null message → <span class="type">400 Bad Request</span>. If the recipient is blacklisted, the call is a silent no-op returning <span class="type">200 OK</span> (no message is sent).</p>
+<pre><code>// POST /api/v0/conversations/RJ
+"thanks!"
+//  →  201</code></pre>
+
+<div class="endpoint"><span class="badge put">PUT</span><span class="path">/api/v0/conversations/{username}</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Acknowledges <strong>all</strong> messages from the user. <span class="type">200 OK</span>; <span class="type">404</span> if no such conversation.</p>
+
+<div class="endpoint"><span class="badge put">PUT</span><span class="path">/api/v0/conversations/{username}/{id}</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Acknowledges a <strong>single</strong> message by its server id. <span class="type">200 OK</span>; <span class="type">404</span> if the conversation or message id is not found.</p>
+
+<div class="endpoint"><span class="badge delete">DELETE</span><span class="path">/api/v0/conversations/{username}</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Closes (marks inactive) the conversation. <span class="type">204 No Content</span>; <span class="type">404</span> if no active conversation exists. The record is retained; the conversation re-activates if a new message arrives or is sent.</p>
+<p class="src-ref">Source: src/slskd/Messaging/API/Controllers/ConversationsController.cs; src/web/src/lib/chat.js</p>
+
+<h3 id="ack">Acknowledgement semantics</h3>
+<p>Soulseek requires each delivered private message to be acknowledged to the server, otherwise it will be re-delivered (replayed) on subsequent logins. slskd records inbound messages as unacknowledged and exposes acknowledgement through the <code>PUT</code> endpoints; under the hood acknowledgement calls <code>AcknowledgePrivateMessageAsync(id)</code> per message. Outbound messages are recorded as already acknowledged (they need no server ack) and stored with <code>id = 0</code>.</p>
+<div class="tip callout"><span class="label">Tip</span><p>The reference web client acknowledges unread messages immediately on opening a conversation, then fetches the thread. A custom client that omits acknowledgement will see the same messages replayed (<code>wasReplayed: true</code>) every time it reconnects.</p></div>
+<p class="src-ref">Source: src/slskd/Messaging/ConversationService.cs (AcknowledgeMessageAsync / AcknowledgeAsync); src/web/src/components/Chat/Chat.jsx</p>
+
+<h2 id="wire">Server message mapping</h2>
+<p>The slskd operations above are convenience wrappers over Soulseek server messages handled by the embedded Soulseek.NET client. For clients speaking the native wire protocol directly, the relevant server message codes (see <a href="soulseek-protocol.html">Soulseek Wire Protocol</a>) are:</p>
+<div class="table-wrap"><table>
+<thead><tr><th>slskd operation</th><th>Server message</th><th>Notes</th></tr></thead>
+<tbody>
+<tr><td>Send private message</td><td><span class="msg-code">Code 22</span> <strong>MessageUser</strong></td><td>Sender → server → recipient. The server assigns the message id seen by the recipient.</td></tr>
+<tr><td>Acknowledge private message</td><td><span class="msg-code">Code 23</span> <strong>MessageAcked</strong></td><td>Acknowledges receipt by id; suppresses replay on next login.</td></tr>
+<tr><td>Watch user / get status</td><td><em>WatchUser / GetStatus / GetPeerAddress</em></td><td>Status, statistics and endpoint resolution. slskd watches before relying on cached status.</td></tr>
+<tr><td>Room list</td><td><em>RoomList</em></td><td>Returns public, private, owned and moderated buckets, flattened by slskd.</td></tr>
+<tr><td>Join / leave room</td><td><em>JoinRoom / LeaveRoom</em></td><td>Join begins server-side streaming of room messages and membership.</td></tr>
+<tr><td>Room message</td><td><em>SayInChatRoom / room message received</em></td><td>Sent via <code>SendRoomMessageAsync</code>; inbound surfaces via the room-message event.</td></tr>
+<tr><td>Set ticker</td><td><em>RoomTickerSet</em></td><td>Server stores and broadcasts the ticker.</td></tr>
+<tr><td>Add private room member</td><td><em>PrivateRoomAddUser</em></td><td>Owner/operator only; server enforces authority.</td></tr>
+<tr><td>Browse shares</td><td><em>peer SharesRequest</em></td><td>Peer-to-peer, not server-mediated. See <a href="shares.html#browse-outgoing">Shares</a>.</td></tr>
+<tr><td>Directory contents</td><td><em>peer FolderContentsRequest</em></td><td>Single-folder enumeration, peer-to-peer.</td></tr>
+</tbody>
+</table></div>
+<div class="note callout"><span class="label">Note</span><p>Codes 22 (MessageUser) and 23 (MessageAcked) are stated in the page brief and correspond to the standard Soulseek server protocol; the exact numeric codes for room/watch/list messages are defined in Soulseek.NET rather than this repository — consult <a href="soulseek-protocol.html">Soulseek Wire Protocol</a> for the full catalog. The named operations above are verified from the controller call sites; the precise message names/codes for non-PM operations are noted as inferred from Soulseek.NET method names.</p></div>
+
+<h2 id="realtime">Real-time updates</h2>
+<p>slskd's <a href="realtime-api.html">ApplicationHub</a> SignalR hub broadcasts two named messages — <code>STATE</code> and <code>OPTIONS</code> — and (on connect) sends the current state and options to the caller. The application <code>State</code> includes a <code>rooms[]</code> (joined room names) and <code>users[]</code> (tracked <code>User</code> records) snapshot, so changes to the joined-room set and tracked-user data propagate through the <code>STATE</code> broadcast.</p>
+<div class="warn callout"><span class="label">Important</span><p>Room <em>message history</em>, room <em>membership</em> and <em>private-message</em> threads are <strong>not</strong> pushed over SignalR as discrete events. The reference web client obtains these by <strong>polling</strong> the REST endpoints: the rooms view polls the joined-room list every 500 ms and the active room's messages/users every 1 s; the chat view polls conversations every 5 s. An interoperating client should likewise poll the relevant endpoints (or watch the <code>STATE</code> broadcast for the room/user set) rather than expecting per-message push notifications.</p></div>
+<p class="src-ref">Source: src/slskd/Core/API/Hubs/ApplicationHub.cs; src/slskd/Core/State.cs; src/web/src/components/Rooms/Rooms.jsx, src/web/src/components/Chat/Chat.jsx</p>
+
+    <div class="page-nav-links">
+      <a class="prev" href="transfers.html"><span class="dir">&larr; Previous</span><br><span class="ttl">Transfers &amp; Queueing</span></a>
+      <a class="next" href="shares.html"><span class="dir">Next &rarr;</span><br><span class="ttl">Shares &amp; Browsing</span></a>
+    </div>
+    <footer class="page-footer">
+      <span>slskd / Soulseek Protocol &amp; Model Specification &middot; derived from source (slskd, Soulseek.NET 10.0.1) &middot; AGPL-3.0</span>
+      <span>Not an official Soulseek document.</span>
+    </footer>
+  </main>
+</div>
+</div>
+<script src="script.js"></script>
+</body>
+</html>

@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Architecture &amp; Concepts · slskd Protocol &amp; Model Specification</title>
+<meta name="description" content="slskd / Soulseek network, protocol and data-model specification — Architecture &amp; Concepts. A language-agnostic reference for building clients, apps and services that interoperate with the Soulseek platform.">
+<link rel="stylesheet" href="style.css">
+<script>(function(){try{var t=localStorage.getItem('slskd-spec-theme');if(t){document.documentElement.setAttribute('data-theme',t);}else if(window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches){document.documentElement.setAttribute('data-theme','dark');}}catch(e){}})();</script>
+</head>
+<body>
+<div class="scrim"></div>
+<div class="layout">
+<aside class="sidebar">
+  <div class="brand">
+    <div class="logo">sd</div>
+    <div class="brand-text">
+      <span class="brand-title">slskd Spec</span>
+      <span class="brand-sub">Soulseek protocol &amp; model</span>
+    </div>
+  </div>
+  <div class="nav-filter-wrap"><input class="nav-filter" type="text" placeholder="Filter pages…" aria-label="Filter pages"></div>
+  <nav>
+  <div class="nav-group-label">Introduction</div>
+  <ul>
+    <li><a href="index.html"><span class="nav-num">1</span><span>Overview</span></a></li>
+    <li class="active"><a href="architecture.html" aria-current="page"><span class="nav-num">2</span><span>Architecture &amp; Concepts</span></a></li>
+  </ul>
+  <div class="nav-group-label">The Soulseek Network</div>
+  <ul>
+    <li><a href="soulseek-protocol.html"><span class="nav-num">3</span><span>Soulseek Wire Protocol</span></a></li>
+    <li><a href="data-model.html"><span class="nav-num">4</span><span>Data Model &amp; Types</span></a></li>
+  </ul>
+  <div class="nav-group-label">Domains</div>
+  <ul>
+    <li><a href="search.html"><span class="nav-num">5</span><span>Search</span></a></li>
+    <li><a href="transfers.html"><span class="nav-num">6</span><span>Transfers &amp; Queueing</span></a></li>
+    <li><a href="users-rooms.html"><span class="nav-num">7</span><span>Users, Rooms &amp; Chat</span></a></li>
+    <li><a href="shares.html"><span class="nav-num">8</span><span>Shares &amp; Browsing</span></a></li>
+  </ul>
+  <div class="nav-group-label">Integration</div>
+  <ul>
+    <li><a href="authentication.html"><span class="nav-num">9</span><span>Authentication &amp; Security</span></a></li>
+    <li><a href="rest-api.html"><span class="nav-num">10</span><span>REST API Reference</span></a></li>
+    <li><a href="realtime-api.html"><span class="nav-num">11</span><span>Real-Time API &amp; Events</span></a></li>
+    <li><a href="relay.html"><span class="nav-num">12</span><span>Relay Protocol</span></a></li>
+  </ul>
+</nav>
+</aside>
+<div class="main-col">
+  <header class="topbar">
+    <button class="menu-btn" aria-label="Toggle navigation">&#9776;</button>
+    <span class="crumb">Introduction / <b>Architecture &amp; Concepts</b></span>
+    <span class="spacer"></span>
+    <a class="tb-link" href="index.html#sitemap">Contents</a>
+    <a class="tb-link" href="https://github.com/slskd/slskd" target="_blank" rel="noopener">GitHub</a>
+    <button class="theme-toggle" aria-label="Toggle dark mode" title="Toggle theme">◐</button>
+  </header>
+  <main class="content">
+
+<h1>Architecture &amp; Concepts</h1>
+<p class="page-lede">The Soulseek platform is not a single protocol but three cooperating planes: a central coordination server, a mesh of direct peer-to-peer connections, and a distributed search-propagation tree. <strong>slskd</strong> is a long-running daemon that embeds a full Soulseek client (the <code>Soulseek.NET</code> library) inside an ASP.NET Core host, and exposes that client to your application through a REST and SignalR API. This page establishes the mental model a builder needs before reading any of the protocol or API references: what each plane does, how connections are established (including through firewalls), how slskd is structured internally, and the lifecycle of the server connection. It cites the slskd source throughout so every claim is traceable.</p>
+
+<nav class="toc">
+  <div class="toc-title">On this page</div>
+  <ul>
+    <li><a href="#big-picture">1. The big picture: three planes</a></li>
+    <li><a href="#central-server">2. The central Soulseek server</a></li>
+    <li><a href="#peer-connections">3. Peer connections (P / D / F)</a></li>
+    <li><a href="#indirect">4. Indirect connections &amp; firewalls</a></li>
+    <li><a href="#distributed-network">5. The distributed search network</a></li>
+    <li><a href="#slskd-internals">6. slskd internal architecture</a></li>
+    <li><a href="#lifecycle">7. Server connection lifecycle</a></li>
+    <li><a href="#ports">8. Ports &amp; endpoints</a></li>
+    <li><a href="#config">9. Deployment &amp; configuration</a></li>
+    <li><a href="#relay">10. Relationship to Relay mode</a></li>
+  </ul>
+</nav>
+
+<h2 id="big-picture">1. The big picture: three planes</h2>
+<p>Every Soulseek client — official or third-party — participates in three logically distinct communication planes simultaneously. Understanding which traffic flows where is the single most important concept for interoperability.</p>
+
+<div class="table-wrap">
+<table>
+<thead><tr><th>Plane</th><th>Transport</th><th>What flows over it</th></tr></thead>
+<tbody>
+<tr><td><strong>Central server</strong></td><td>One persistent TCP connection to <code>vps.slsknet.org:2271</code></td><td>Login, presence/status, room membership and chat, private messages, search <em>submission</em>, peer-address resolution, distributed-network parameters, server statistics.</td></tr>
+<tr><td><strong>Peer-to-peer</strong></td><td>Many short- or long-lived direct TCP connections between two clients</td><td>Search <em>results</em>, share browsing, user info, folder-contents requests, transfer negotiation, and the file bytes themselves.</td></tr>
+<tr><td><strong>Distributed network</strong></td><td>A tree of peer TCP connections (one parent, up to N children)</td><td>Propagation of <em>incoming</em> search requests down the tree. Search <em>results</em> never travel back up the tree.</td></tr>
+</tbody>
+</table>
+</div>
+
+<pre><code>                         ┌───────────────────────────────────────────┐
+                         │      Central Soulseek server              │
+                         │      vps.slsknet.org : 2271  (TCP)         │
+                         │  login · presence · rooms · PMs ·         │
+                         │  FileSearch submission · GetPeerAddress · │
+                         │  ConnectToPeer relay · ParentMinSpeed     │
+                         └───────▲───────────────────────▲───────────┘
+                                 │ (1) one persistent     │
+                                 │     server connection  │
+                ┌────────────────┴──────┐         ┌───────┴────────────────┐
+                │   YOUR slskd / client  │         │     Other peer (Bob)   │
+                │   listen port 50300    │         │                        │
+                └───┬────────────┬───────┘         └────────────────────────┘
+                    │            │
+        (2) direct  │            │ (3) distributed tree ('D' conns)
+        peer conns  │            │
+        'P' msgs ───┤            ├── parent ──►  (branch root ··· upstream)
+        'F' files ──┤            └── child  ──►  Carol  ──► Dave  ──► …
+                    │                              (search requests fan out)
+                    ▼
+              Search reply ('P'), Browse, UserInfo, file bytes ('F')
+              come back DIRECTLY, peer-to-peer — never through the tree.</code></pre>
+
+<div class="note callout"><span class="label">Key insight</span><p>You submit a search to the <em>central server</em>; the server injects it into the <em>distributed tree</em> where it fans out to many peers; each matching peer opens a <em>direct peer connection back to you</em> to deliver its results. Three planes, one logical operation. See <a href="search.html">Search</a> for the full sequence.</p></div>
+
+<h2 id="central-server">2. The central Soulseek server</h2>
+<p>The central server is the only well-known, fixed endpoint in the network. A client maintains exactly one TCP connection to it for the lifetime of a session. It performs coordination that cannot be done peer-to-peer: authenticating logins, tracking who is online, distributing room chat, and — critically — telling clients each other's IP address and port (peers are not directly addressable until the server reveals their address).</p>
+
+<p>Representative traffic carried over the server connection (server message codes; see <a href="soulseek-protocol.html#server-messages">Soulseek Wire Protocol</a> for the full catalog):</p>
+
+<div class="table-wrap">
+<table>
+<thead><tr><th>Concern</th><th>Server message(s)</th><th>Purpose</th></tr></thead>
+<tbody>
+<tr><td>Authentication</td><td><code>Login</code> (1)</td><td>Authenticate username/password; receive greeting, IP, privilege status.</td></tr>
+<tr><td>Listen port</td><td><code>SetListenPort</code> (2)</td><td>Tell the server which port this client accepts incoming peer connections on.</td></tr>
+<tr><td>Address resolution</td><td><code>GetPeerAddress</code> (3)</td><td>Resolve a username to an <span class="type">IP</span>:<span class="type">port</span> so a direct connection can be opened.</td></tr>
+<tr><td>Presence</td><td><code>AddUser</code> (5), <code>GetUserStatus</code> (7), <code>SetStatus</code> (28)</td><td>Watch users, query online/away status, set own status.</td></tr>
+<tr><td>Rooms &amp; chat</td><td><code>SayInChatRoom</code> (13), <code>JoinRoom</code> (14), <code>LeaveRoom</code> (15), <code>RoomList</code> (64)</td><td>Room membership and public chat.</td></tr>
+<tr><td>Private messages</td><td><code>MessageUser</code> (22), <code>MessageAcked</code> (23)</td><td>Server-relayed private messaging (does not require a peer connection).</td></tr>
+<tr><td>Peer connection brokering</td><td><code>ConnectToPeer</code> (18), <code>CantConnectToPeer</code> (1001)</td><td>Ask the server to instruct a (possibly firewalled) peer to connect back. See §4.</td></tr>
+<tr><td>Search submission</td><td><code>FileSearch</code> (26), <code>UserSearch</code> (42), <code>RoomSearch</code> (120), <code>WishlistSearch</code> (103)</td><td>Submit a query to be distributed; results return as peer messages.</td></tr>
+<tr><td>Share statistics</td><td><code>SharedFoldersFiles</code> (35), <code>GetUserStats</code> (36)</td><td>Report own share counts; query others' stats.</td></tr>
+<tr><td>Distributed parameters</td><td><code>ParentMinSpeed</code> (83), <code>ParentSpeedRatio</code> (84)</td><td>Server-pushed thresholds governing distributed-tree participation. See §5.</td></tr>
+</tbody>
+</table>
+</div>
+
+<p>The default endpoint and the knobs to override it (slskd binds these to <code>Soulseek.Address</code> / <code>Soulseek.Port</code>):</p>
+
+<div class="table-wrap">
+<table>
+<thead><tr><th>Setting</th><th>Default</th><th>CLI flag</th><th>Env var</th><th>YAML</th></tr></thead>
+<tbody>
+<tr><td>Server address</td><td><code>vps.slsknet.org</code></td><td><code>--slsk-address</code></td><td><code>SLSKD_SLSK_ADDRESS</code></td><td><code>soulseek.address</code></td></tr>
+<tr><td>Server port</td><td><span class="type">2271</span> <span class="type">int32</span> (range 1024–65535)</td><td><code>--slsk-port</code></td><td><code>SLSKD_SLSK_PORT</code></td><td><code>soulseek.port</code></td></tr>
+</tbody>
+</table>
+</div>
+<p class="src-ref">Source: src/slskd/Core/Options.cs (<code>SoulseekOptions.Address</code> = <code>"vps.slsknet.org"</code>, <code>SoulseekOptions.Port</code> = <code>2271</code>); docs/config.md (Server Connection).</p>
+
+<h2 id="peer-connections">3. Peer connections (P / D / F)</h2>
+<p>All non-server traffic flows over direct TCP connections between two clients. The Soulseek protocol multiplexes three distinct purposes onto separate connections, each identified by a single ASCII letter sent during connection setup. slskd configures all three independently through <code>SoulseekClientOptionsPatch</code>.</p>
+
+<div class="table-wrap">
+<table>
+<thead><tr><th>Type</th><th>Letter</th><th>Purpose</th></tr></thead>
+<tbody>
+<tr><td><strong>Peer</strong></td><td><code>P</code></td><td>General peer messaging: search replies, share browse, user info, folder-contents requests, and transfer negotiation (queue/place/start). One per peer pair, reused.</td></tr>
+<tr><td><strong>Distributed</strong></td><td><code>D</code></td><td>Distributed-network links: the connection to a parent and to each child, over which search requests are propagated. See §5.</td></tr>
+<tr><td><strong>File transfer</strong></td><td><code>F</code></td><td>A dedicated connection carrying the raw bytes of a single file transfer. One per active transfer.</td></tr>
+</tbody>
+</table>
+</div>
+<p class="src-ref">Source: nicotine+ <code>SLSKPROTOCOL</code> (connection-type letters); src/slskd/Application.cs (<code>peerConnectionOptions</code>, <code>distributedConnectionOptions</code>, <code>transferConnectionOptions</code> passed to <code>SoulseekClientOptionsPatch</code>).</p>
+
+<h3 id="outgoing-incoming">Outgoing vs incoming &amp; the listen port</h3>
+<p>A client both <em>initiates</em> connections to other peers (e.g. to fetch a browse listing) and <em>accepts</em> incoming connections (e.g. from a peer delivering a search result). To accept incoming connections, the client must listen on a TCP port and advertise it to the central server via <code>SetListenPort</code>. slskd listens on <code>0.0.0.0:50300</code> by default.</p>
+
+<div class="table-wrap">
+<table>
+<thead><tr><th>Setting</th><th>Default</th><th>CLI flag</th><th>Env var</th><th>YAML</th></tr></thead>
+<tbody>
+<tr><td>Listen IP address</td><td><code>0.0.0.0</code></td><td><code>--slsk-listen-ip-address</code></td><td><code>SLSKD_SLSK_LISTEN_IP_ADDRESS</code></td><td><code>soulseek.listen_ip_address</code></td></tr>
+<tr><td>Listen port</td><td><span class="type">50300</span> <span class="type">int32</span> (range 1024–65535)</td><td><code>--slsk-listen-port</code></td><td><code>SLSKD_SLSK_LISTEN_PORT</code></td><td><code>soulseek.listen_port</code></td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="warn callout"><span class="label">Port forwarding matters</span><p>If the listen port is not reachable from the internet (no port-forward / firewall rule), other clients cannot open direct connections <em>to</em> you. The slskd documentation lists the symptoms explicitly: "poor search results and the inability to browse or retrieve user information for some users." Two firewalled peers cannot connect to each other at all (see §4). Forwarding the listen port is the single highest-impact connectivity fix.</p></div>
+<p class="src-ref">Source: src/slskd/Core/Options.cs (<code>SoulseekOptions.ListenIpAddress</code> = <code>"0.0.0.0"</code>, <code>ListenPort</code> = <code>50300</code>); src/slskd/Application.cs:459; docs/config.md (Listen IP Address and Port).</p>
+
+<h2 id="indirect">4. Indirect connections &amp; firewalls</h2>
+<p>Because peers are not addressable until the server reveals their address, and because many peers sit behind NAT/firewalls, the protocol defines a server-brokered fallback for establishing a peer connection. The mechanism inverts the connection direction so that a firewalled peer dials <em>out</em> rather than being dialed.</p>
+
+<ol>
+<li><strong>Direct attempt.</strong> The initiator resolves the target with <code>GetPeerAddress</code> (3) and attempts a direct TCP connection to the returned <span class="type">IP</span>:<span class="type">port</span>, sending a <code>PeerInit</code> message that declares the connection type (<code>P</code>/<code>D</code>/<code>F</code>) and a unique <em>token</em>.</li>
+<li><strong>Indirect fallback.</strong> If the direct attempt fails (target firewalled), the initiator sends <code>ConnectToPeer</code> (18) to the central server, naming the target user, the connection type, and the same token.</li>
+<li><strong>Server relay.</strong> The server forwards the request to the target, who then dials <em>back</em> to the initiator and sends a <code>PierceFirewall</code> message carrying the token, allowing the initiator to match the inbound connection to its pending request.</li>
+<li><strong>Give up.</strong> If the target also cannot connect (e.g. both peers firewalled), it returns <code>CantConnectToPeer</code> (1001) to the server, which relays it to the initiator.</li>
+</ol>
+
+<div class="note callout"><span class="label">Note</span><p>The token correlates the original request, the <code>ConnectToPeer</code> relay, and the eventual <code>PierceFirewall</code> handshake — it is how a client distinguishes which pending operation an unexpected inbound connection belongs to. The exact byte layout of <code>PeerInit</code>, <code>PierceFirewall</code>, <code>ConnectToPeer</code> and <code>CantConnectToPeer</code> is documented in <a href="soulseek-protocol.html#init-messages">Soulseek Wire Protocol</a>.</p></div>
+<p class="src-ref">Source: nicotine+ <code>SLSKPROTOCOL</code> (ConnectToPeer / PierceFirewall / CantConnectToPeer); message codes verified against the spec's server-message catalog.</p>
+
+<h2 id="distributed-network">5. The distributed search network</h2>
+<p>Search requests are not broadcast by the server to every user — that would not scale. Instead, clients self-organize into a <strong>distributed tree</strong>. Each participating client maintains one connection <em>upward</em> to a <strong>parent</strong> and up to N connections <em>downward</em> to <strong>children</strong>. The server injects each submitted search near the roots; every node re-broadcasts the request to all of its children, so the query fans out across the whole network in a few hops.</p>
+
+<h3 id="branch-root-level">Branch root &amp; branch level</h3>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Concept</th><th>Meaning</th><th>slskd state field</th></tr></thead>
+<tbody>
+<tr><td>Parent</td><td>The single upstream node this client receives search requests from.</td><td><code>parent</code> (username)</td></tr>
+<tr><td>Children</td><td>Downstream nodes this client re-broadcasts requests to.</td><td><code>children</code> (username list), <code>childLimit</code>, <code>canAcceptChildren</code></td></tr>
+<tr><td>Branch root</td><td>The topmost node of this client's branch — the node connected directly to the server's distribution point. Reported via the distributed <code>BranchRoot</code> message.</td><td><code>branchRoot</code>, <code>isBranchRoot</code></td></tr>
+<tr><td>Branch level</td><td>This client's depth below the branch root (the root is level 0). Reported via the distributed <code>BranchLevel</code> message and incremented at each hop down.</td><td><code>branchLevel</code></td></tr>
+<tr><td>Has parent</td><td>Whether this client currently has an upstream connection (and thus receives requests).</td><td><code>hasParent</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>slskd surfaces this live in application state. Serialized as camelCase JSON, the distributed-network state looks like:</p>
+<pre><code>{
+  "branchLevel": 2,
+  "branchRoot": "someUpstreamUser",
+  "canAcceptChildren": true,
+  "childLimit": 25,
+  "children": ["childUserA", "childUserB"],
+  "hasParent": true,
+  "isBranchRoot": false,
+  "parent": "myParentUser"
+}</code></pre>
+<p class="src-ref">Source: src/slskd/Core/State.cs (<code>DistributedNetworkState</code>: <code>BranchLevel</code>, <code>BranchRoot</code>, <code>CanAcceptChildren</code>, <code>ChildLimit</code>, <code>Children</code>, <code>HasParent</code>, <code>IsBranchRoot</code>, <code>Parent</code>); src/slskd/Application.cs:1136 (populated from <code>DistributedNetworkInfo</code>).</p>
+
+<h3 id="parent-eligibility">Parent eligibility: ParentMinSpeed &amp; ParentSpeedRatio</h3>
+<p>The server pushes two parameters that govern who may act as a parent and how many children they may take:</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Message</th><th>Code</th><th>Meaning (per protocol reference)</th></tr></thead>
+<tbody>
+<tr><td><code>ParentMinSpeed</code></td><td>83</td><td>The minimum upload speed required to become a parent in the distributed network.</td></tr>
+<tr><td><code>ParentSpeedRatio</code></td><td>84</td><td>A ratio determining how many children a node may have: maximum children = (own upload speed) ÷ (speed ratio).</td></tr>
+</tbody>
+</table>
+</div>
+<p class="src-ref">Source: nicotine+ <code>SLSKPROTOCOL</code> (ParentMinSpeed code 83, ParentSpeedRatio code 84).</p>
+
+<h3 id="dnet-toggles">slskd distributed-network toggles</h3>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Setting</th><th>Default</th><th>CLI flag</th><th>YAML</th><th>Effect</th></tr></thead>
+<tbody>
+<tr><td>Disabled</td><td><code>false</code></td><td><code>--slsk-no-dnet</code></td><td><code>distributed_network.disabled</code></td><td>If true, slskd obtains no parent and no children and receives <em>no</em> distributed search requests. Only safe when sharing nothing.</td></tr>
+<tr><td>Disable children</td><td><code>false</code></td><td><code>--slsk-dnet-no-children</code></td><td><code>distributed_network.disable_children</code></td><td>Still gets a parent (and requests) but refuses child connections — lighter load.</td></tr>
+<tr><td>Child limit</td><td><span class="type">25</span> <span class="type">int32</span></td><td><code>--slsk-dnet-children</code></td><td><code>distributed_network.child_limit</code></td><td>Maximum number of distributed children accepted.</td></tr>
+<tr><td>Logging</td><td><code>false</code></td><td><code>--slsk-dnet-logging</code></td><td>—</td><td>Verbose distributed-network diagnostics.</td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="danger callout"><span class="label">Results do not return through the tree</span><p>The distributed tree carries <em>requests downward only</em>. When a peer in the tree matches your query, it opens a <strong>direct peer (<code>P</code>) connection back to you</strong> and sends a <code>SearchReply</code>. Do not expect results to arrive on the distributed connection. This is the most commonly misunderstood part of the architecture.</p></div>
+<p class="src-ref">Source: src/slskd/Core/Options.cs (<code>DistributedNetworkOptions</code>: <code>Disabled</code>=false, <code>DisableChildren</code>=false, <code>ChildLimit</code>=25); docs/config.md (Distributed Network); src/slskd/Application.cs (<code>SoulseekClientOptionsPatch</code> distributed flags).</p>
+
+<h2 id="slskd-internals">6. slskd internal architecture</h2>
+<p>slskd is a single .NET process that boots an ASP.NET Core web host and, inside it, an embedded Soulseek client. The diagram below shows the principal subsystems and how a request crosses them.</p>
+
+<pre><code>┌──────────────────────────────────────────────────────────────────────┐
+│  slskd process  (ASP.NET Core / Kestrel host — Program.cs)             │
+│                                                                        │
+│  ┌──────────── Web UI (wwwroot, React SPA) ──────────────┐            │
+│  │     served as static files; talks to the API below     │            │
+│  └───────────────────────┬────────────────────────────────┘            │
+│        REST controllers   │   SignalR hubs (/hub/application, /logs,   │
+│        (/api/v0/…)         │   /search, /relay)                        │
+│  ┌────────────────────────┴────────────────────────────────┐          │
+│  │  Application (IApplication / IHostedService) — orchestrator│        │
+│  │  Managed concerns:  Search · Transfers(up/down) · Users ·  │        │
+│  │  Rooms · Messaging · Shares · Relay · Events               │        │
+│  └───────┬───────────────────────────────┬──────────────────┘          │
+│          │                                │                            │
+│  ┌───────▼─────────┐            ┌─────────▼──────────────┐             │
+│  │ SoulseekClient  │            │  SQLite databases       │             │
+│  │ (Soulseek.NET)  │            │  search · transfers ·   │             │
+│  │  server + peer  │            │  messaging · events     │             │
+│  │  + distributed  │            │  (EF Core + Dapper)     │             │
+│  └───────┬─────────┘            └─────────────────────────┘             │
+└──────────┼─────────────────────────────────────────────────────────────┘
+           │ TCP
+   Soulseek network (central server · peers · distributed tree)</code></pre>
+
+<div class="table-wrap">
+<table>
+<thead><tr><th>Component</th><th>Role</th><th>Source / registration</th></tr></thead>
+<tbody>
+<tr><td>ASP.NET Core host (Kestrel)</td><td>HTTP/HTTPS server, routing, auth, static-file serving, CORS.</td><td><code>Program.cs</code> (<code>WebApplication.CreateBuilder</code>, <code>UseKestrel</code>)</td></tr>
+<tr><td>Embedded <code>SoulseekClient</code></td><td>The actual Soulseek client (server connection, peer messaging, distributed network, transfers). Registered as a singleton <code>ISoulseekClient</code>; configured at startup via <code>ReconfigureOptionsAsync</code>.</td><td><code>Program.cs</code> (<code>AddSingleton&lt;ISoulseekClient, SoulseekClient&gt;</code>), <code>Application.cs</code></td></tr>
+<tr><td><code>Application</code> orchestrator</td><td>Wires Soulseek.NET events to slskd state and the managed services; runs as an <code>IHostedService</code>.</td><td><code>Application.cs</code> (<code>AddSingleton&lt;IApplication, Application&gt;</code>, <code>AddHostedService</code>)</td></tr>
+<tr><td>SQLite databases</td><td>Persistence for searches, transfers, messaging and events; accessed through EF Core (<code>DbContext</code>) and Dapper. Volatile (in-memory) mode is available.</td><td><code>Program.cs</code> (<code>SearchDbContext</code>, <code>TransfersDbContext</code>, <code>MessagingDbContext</code>, <code>EventsDbContext</code>)</td></tr>
+<tr><td>SignalR hubs</td><td>Real-time push to clients: <code>/hub/application</code>, <code>/hub/logs</code>, <code>/hub/search</code>, <code>/hub/relay</code>.</td><td><code>Program.cs</code> (<code>MapHub</code>)</td></tr>
+<tr><td>Static web UI</td><td>The bundled React SPA served from <code>wwwroot</code> (configurable via <code>web.content_path</code>); disabled in headless mode.</td><td><code>Program.cs</code> (<code>UseFileServer</code>)</td></tr>
+</tbody>
+</table>
+</div>
+
+<p>Principal managed services (all registered as singletons in <code>ConfigureDependencyInjectionContainer</code>): <code>SearchService</code>, <code>TransferService</code> + <code>DownloadService</code>/<code>UploadService</code>, <code>UserService</code>, <code>RoomService</code>, <code>MessagingService</code>/<code>ConversationService</code>, <code>ShareService</code>, <code>RelayService</code>, plus integrations (FTP, Pushbullet, scripts, webhooks, VPN) and an <code>EventBus</code>/<code>EventService</code>.</p>
+<p class="src-ref">Source: src/slskd/Program.cs (DI container, hub mapping, Kestrel, DbContexts); src/slskd/Application.cs.</p>
+
+<h3 id="client-options">Embedded client configuration</h3>
+<p>The <code>SoulseekClient</code> is constructed partially in DI, then fully configured by <code>Application</code> at startup. Notable fixed parameters from the source:</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Parameter</th><th>Value / source</th></tr></thead>
+<tbody>
+<tr><td>Network minor version</td><td><span class="type">760</span> (forks are instructed to change this)</td></tr>
+<tr><td>Max concurrent uploads / downloads</td><td><code>transfers.upload.slots</code> / <code>transfers.download.slots</code></td></tr>
+<tr><td>Max concurrent searches</td><td><span class="type">2</span> (fixed)</td></tr>
+<tr><td>Listen port</td><td><code>soulseek.listen_port</code> (50300)</td></tr>
+<tr><td>Distributed child limit / enabled / accept children</td><td>from <code>DistributedNetworkOptions</code></td></tr>
+</tbody>
+</table>
+</div>
+<p class="src-ref">Source: src/slskd/Program.cs (<code>NetworkMinorVersion = 760</code>, <code>SoulseekClientOptions</code>); src/slskd/Application.cs (<code>SoulseekClientOptionsPatch</code>).</p>
+
+<h2 id="lifecycle">7. Server connection lifecycle</h2>
+<p>The state of the server connection is modelled by the <code>SoulseekClientStates</code> flags enum from Soulseek.NET. Because it is a <em>flags</em> enum, several bits can be set at once (e.g. <code>Connected | LoggingIn</code> during the login handshake). slskd exposes the current value through the <code>ServerState</code> DTO and derives convenience booleans from it.</p>
+
+<div class="table-wrap">
+<table>
+<thead><tr><th>State flag</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>Disconnected</code></td><td>No TCP connection to the server. <code>Address</code> and <code>IPEndPoint</code> are reported as null in this state.</td></tr>
+<tr><td><code>Connecting</code></td><td>TCP connection being established. Contributes to <code>isTransitioning</code>.</td></tr>
+<tr><td><code>Connected</code></td><td>TCP connection established; sets <code>isConnected</code>. Login may not yet have occurred.</td></tr>
+<tr><td><code>LoggingIn</code></td><td>Login handshake in progress (typically <code>Connected | LoggingIn</code>). Contributes to <code>isTransitioning</code>.</td></tr>
+<tr><td><code>LoggedIn</code></td><td>Authenticated and fully operational; sets <code>isLoggedIn</code>. Searches, browsing and transfers are possible only in this state.</td></tr>
+<tr><td><code>Disconnecting</code></td><td>Connection being torn down. Contributes to <code>isTransitioning</code>.</td></tr>
+</tbody>
+</table>
+</div>
+
+<p>The <code>ServerState</code> DTO (serialized camelCase by the API):</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>address</code></td><td><span class="type">string</span></td><td>Configured server address; null while <code>Disconnected</code>.</td></tr>
+<tr><td><code>iPEndPoint</code></td><td><span class="type">IPEndPoint</span></td><td>Resolved remote <span class="type">IP</span>:<span class="type">port</span>; null/default while <code>Disconnected</code>.</td></tr>
+<tr><td><code>state</code></td><td><span class="type">SoulseekClientStates</span></td><td>The flags enum value (serialized as a string by <code>JsonStringEnumConverter</code>).</td></tr>
+<tr><td><code>username</code></td><td><span class="type">string</span></td><td>The logged-in username (present on the <code>Core.API.ServerState</code> DTO).</td></tr>
+<tr><td><code>isConnected</code></td><td><span class="type">bool</span></td><td>Derived: <code>state</code> has the <code>Connected</code> flag.</td></tr>
+<tr><td><code>isLoggedIn</code></td><td><span class="type">bool</span></td><td>Derived: <code>state</code> has the <code>LoggedIn</code> flag.</td></tr>
+<tr><td><code>isTransitioning</code></td><td><span class="type">bool</span></td><td>Derived: <code>state</code> has <code>Connecting</code>, <code>Disconnecting</code>, or <code>LoggingIn</code>.</td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="note callout"><span class="label">Two ServerState shapes</span><p>slskd defines two records named <code>ServerState</code>: the API DTO in <code>Core/API/DTO/ServerState.cs</code> (with <code>Username</code>) and the internal application-state record in <code>Core/State.cs</code> (which additionally exposes <code>isConnecting</code> and <code>isLoggingIn</code> and omits <code>Username</code>, since the username lives on the sibling <code>User</code> state). Both expose the same <code>state</code> flags and the <code>isConnected</code>/<code>isLoggedIn</code>/<code>isTransitioning</code> derivations. The <span class="badge get">GET</span> <code>/api/v0/server</code> endpoint is the canonical read.</p></div>
+
+<h3 id="connect-flow">Connect &amp; reconnect flow</h3>
+<p>slskd does not connect automatically unless valid credentials are configured. A dedicated <code>ConnectionWatchdog</code> drives (re)connection, always reading the <em>current</em> username/password so credential edits take effect on the next attempt without a restart:</p>
+<ol>
+<li>At startup, if <code>--no-connect</code> is set, or username/password are empty, slskd stays disconnected (it logs a warning and waits for a manual connect).</li>
+<li>Otherwise the <code>ConnectionWatchdog</code> starts and calls <code>Client.ConnectAsync(address, port, username, password)</code> with backoff + jitter on failure.</li>
+<li>On success the <code>Connected</code> event fires (the watchdog stops); login proceeds to <code>LoggedIn</code>.</li>
+<li>On disconnect, or on a <code>LoginRejectedException</code>, the watchdog restarts the reconnect loop.</li>
+<li>Changing <code>address</code>, <code>port</code>, <code>username</code> or <code>password</code> is marked <code>RequiresReconnect</code> — slskd resets the server connection to apply them.</li>
+</ol>
+<p class="src-ref">Source: src/slskd/Core/ConnectionWatchdog.cs:309 (<code>ConnectAsync</code>); src/slskd/Application.cs:512–524, 928–997 (connect/disconnect handling); src/slskd/Core/Options.cs (<code>[RequiresReconnect]</code> on credentials/address/port).</p>
+
+<h2 id="ports">8. Ports &amp; endpoints</h2>
+<p>A fully-deployed slskd instance involves four ports. Three are listeners slskd opens; one is the remote server it dials.</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Port</th><th>Direction</th><th>Protocol</th><th>Default</th><th>Purpose / config</th></tr></thead>
+<tbody>
+<tr><td><span class="type">5030</span></td><td>inbound (listen)</td><td>HTTP</td><td>yes</td><td>Web UI + REST/SignalR API. <code>web.port</code> / <code>--http-port</code> / <code>SLSKD_HTTP_PORT</code>.</td></tr>
+<tr><td><span class="type">5031</span></td><td>inbound (listen)</td><td>HTTPS</td><td>yes (self-signed cert)</td><td>TLS web/API. <code>web.https.port</code> / <code>--https-port</code>. Disable with <code>--no-https</code>; a random self-signed cert is generated unless a <code>.pfx</code> is supplied.</td></tr>
+<tr><td><span class="type">50300</span></td><td>inbound (listen)</td><td>TCP (Soulseek peer)</td><td>yes</td><td>Incoming peer/distributed/file connections. <code>soulseek.listen_port</code>. <strong>Should be port-forwarded.</strong></td></tr>
+<tr><td><span class="type">2271</span></td><td>outbound (dial)</td><td>TCP (Soulseek server)</td><td>yes</td><td>Remote central Soulseek server. <code>soulseek.port</code> on <code>soulseek.address</code> (<code>vps.slsknet.org</code>).</td></tr>
+</tbody>
+</table>
+</div>
+<p class="src-ref">Source: src/slskd/Core/Options.cs (<code>WebOptions.Port</code>=5030, <code>HttpsOptions.Port</code>=5031, <code>SoulseekOptions.ListenPort</code>=50300, <code>SoulseekOptions.Port</code>=2271); README.md (Docker port mapping <code>5030</code>/<code>5031</code>/<code>50300</code>).</p>
+
+<h3 id="url-base">Base URL &amp; reverse proxies</h3>
+<p>The web tier supports being hosted under a path prefix via <code>web.url_base</code> (default <code>/</code>, flag <code>--url-base</code>, env <code>SLSKD_URL_BASE</code>). slskd applies it as the ASP.NET <code>PathBase</code>, rewrites static-asset links, and injects <code>window.urlBase</code> into served HTML so the SPA and API live correctly behind a reverse proxy. HTTPS can be forced (HTTP→HTTPS redirect + HSTS) with <code>web.https.force</code> / <code>--force-https</code>. A Unix domain socket listener is also available (<code>web.socket</code> / <code>--http-socket</code>).</p>
+<p class="src-ref">Source: src/slskd/Program.cs:1064–1074 (<code>UsePathBase</code>, HTML rewrite/injection), 1056–1062 (<code>UseHttpsRedirection</code>/<code>UseHsts</code>); src/slskd/Core/Options.cs (<code>UrlBase</code>=<code>"/"</code>, <code>Socket</code>).</p>
+
+<h2 id="config">9. Deployment &amp; configuration</h2>
+<p>slskd is configured from four layered sources (later sources override earlier ones): built-in defaults → environment variables (prefix <code>SLSKD_</code>) → the YAML configuration file → command-line flags. The config file lives at <code>&lt;app-dir&gt;/slskd.yml</code> and is created on first run; the app directory defaults to <code>~/.local/share/slskd</code> (Linux/macOS) or <code>%localappdata%/slskd</code> (Windows), overridable with <code>--app-dir</code> / <code>SLSKD_APP_DIR</code>.</p>
+
+<div class="table-wrap">
+<table>
+<thead><tr><th>Integration knob</th><th>YAML</th><th>Env var</th><th>Notes</th></tr></thead>
+<tbody>
+<tr><td>Soulseek username</td><td><code>soulseek.username</code></td><td><code>SLSKD_SLSK_USERNAME</code></td><td>Required to connect. Changing it resets the connection.</td></tr>
+<tr><td>Soulseek password</td><td><code>soulseek.password</code></td><td><code>SLSKD_SLSK_PASSWORD</code></td><td>Masked when options are serialized.</td></tr>
+<tr><td>Listen port</td><td><code>soulseek.listen_port</code></td><td><code>SLSKD_SLSK_LISTEN_PORT</code></td><td>Default 50300; forward this port.</td></tr>
+<tr><td>Listen IP</td><td><code>soulseek.listen_ip_address</code></td><td><code>SLSKD_SLSK_LISTEN_IP_ADDRESS</code></td><td>Default <code>0.0.0.0</code>.</td></tr>
+<tr><td>Web HTTP port</td><td><code>web.port</code></td><td><code>SLSKD_HTTP_PORT</code></td><td>Default 5030.</td></tr>
+<tr><td>HTTPS</td><td><code>web.https.*</code></td><td><code>SLSKD_HTTPS_*</code></td><td>Port 5031; self-signed by default.</td></tr>
+<tr><td>URL base</td><td><code>web.url_base</code></td><td><code>SLSKD_URL_BASE</code></td><td>For reverse-proxy path prefixes.</td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="tip callout"><span class="label">Tip</span><p>This page lists only the integration-critical knobs needed to understand the architecture. The exhaustive, authoritative list of every option (with defaults and validation) is <code>docs/config.md</code>; an annotated example file is <code>config/slskd.example.yml</code>. The default web credentials are <code>slskd</code> / <code>slskd</code> — change them before exposing the instance. See <a href="authentication.html">Authentication &amp; Security</a>.</p></div>
+<p class="src-ref">Source: README.md (Configuration, app-directory locations, default credentials); src/slskd/Program.cs (config provider layering, <code>SLSKD_</code> env prefix); src/slskd/Core/Options.cs.</p>
+
+<h2 id="relay">10. Relationship to Relay mode</h2>
+<p>A single slskd instance does everything described above. <strong>Relay mode</strong> is an optional topology in which two or more slskd instances cooperate as one logical client: one <em>controller</em> holds the single Soulseek login and speaks all three network planes, while one or more <em>agents</em> connect <em>to the controller</em> (not to the Soulseek network) and relay their shared files into it. Agents dial out to the controller over HTTPS, so they need no inbound ports or port-forwarding of their own — useful for serving files from locations where forwarding the Soulseek listen port is impractical. Agent traffic is authenticated with an API key plus a per-agent shared secret, optionally scoped by CIDR. The controller exposes a dedicated SignalR hub at <code>/hub/relay</code>.</p>
+<p>This is a deployment concern layered on top of the core architecture, not a change to the Soulseek protocol itself. See <a href="relay.html">Relay Protocol</a> for the full controller/agent handshake, message set, and security model.</p>
+<p class="src-ref">Source: docs/relay.md; src/slskd/Program.cs (<code>MapHub&lt;RelayHub&gt;("/hub/relay")</code>); src/slskd/Core/Options.cs (Relay options, <code>RelayMode</code>).</p>
+
+    <div class="page-nav-links">
+      <a class="prev" href="index.html"><span class="dir">&larr; Previous</span><br><span class="ttl">Overview</span></a>
+      <a class="next" href="soulseek-protocol.html"><span class="dir">Next &rarr;</span><br><span class="ttl">Soulseek Wire Protocol</span></a>
+    </div>
+    <footer class="page-footer">
+      <span>slskd / Soulseek Protocol &amp; Model Specification &middot; derived from source (slskd, Soulseek.NET 10.0.1) &middot; AGPL-3.0</span>
+      <span>Not an official Soulseek document.</span>
+    </footer>
+  </main>
+</div>
+</div>
+<script src="script.js"></script>
+</body>
+</html>

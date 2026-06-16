@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Relay Protocol · slskd Protocol &amp; Model Specification</title>
+<meta name="description" content="slskd / Soulseek network, protocol and data-model specification — Relay Protocol. A language-agnostic reference for building clients, apps and services that interoperate with the Soulseek platform.">
+<link rel="stylesheet" href="style.css">
+<script>(function(){try{var t=localStorage.getItem('slskd-spec-theme');if(t){document.documentElement.setAttribute('data-theme',t);}else if(window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches){document.documentElement.setAttribute('data-theme','dark');}}catch(e){}})();</script>
+</head>
+<body>
+<div class="scrim"></div>
+<div class="layout">
+<aside class="sidebar">
+  <div class="brand">
+    <div class="logo">sd</div>
+    <div class="brand-text">
+      <span class="brand-title">slskd Spec</span>
+      <span class="brand-sub">Soulseek protocol &amp; model</span>
+    </div>
+  </div>
+  <div class="nav-filter-wrap"><input class="nav-filter" type="text" placeholder="Filter pages…" aria-label="Filter pages"></div>
+  <nav>
+  <div class="nav-group-label">Introduction</div>
+  <ul>
+    <li><a href="index.html"><span class="nav-num">1</span><span>Overview</span></a></li>
+    <li><a href="architecture.html"><span class="nav-num">2</span><span>Architecture &amp; Concepts</span></a></li>
+  </ul>
+  <div class="nav-group-label">The Soulseek Network</div>
+  <ul>
+    <li><a href="soulseek-protocol.html"><span class="nav-num">3</span><span>Soulseek Wire Protocol</span></a></li>
+    <li><a href="data-model.html"><span class="nav-num">4</span><span>Data Model &amp; Types</span></a></li>
+  </ul>
+  <div class="nav-group-label">Domains</div>
+  <ul>
+    <li><a href="search.html"><span class="nav-num">5</span><span>Search</span></a></li>
+    <li><a href="transfers.html"><span class="nav-num">6</span><span>Transfers &amp; Queueing</span></a></li>
+    <li><a href="users-rooms.html"><span class="nav-num">7</span><span>Users, Rooms &amp; Chat</span></a></li>
+    <li><a href="shares.html"><span class="nav-num">8</span><span>Shares &amp; Browsing</span></a></li>
+  </ul>
+  <div class="nav-group-label">Integration</div>
+  <ul>
+    <li><a href="authentication.html"><span class="nav-num">9</span><span>Authentication &amp; Security</span></a></li>
+    <li><a href="rest-api.html"><span class="nav-num">10</span><span>REST API Reference</span></a></li>
+    <li><a href="realtime-api.html"><span class="nav-num">11</span><span>Real-Time API &amp; Events</span></a></li>
+    <li class="active"><a href="relay.html" aria-current="page"><span class="nav-num">12</span><span>Relay Protocol</span></a></li>
+  </ul>
+</nav>
+</aside>
+<div class="main-col">
+  <header class="topbar">
+    <button class="menu-btn" aria-label="Toggle navigation">&#9776;</button>
+    <span class="crumb">Integration / <b>Relay Protocol</b></span>
+    <span class="spacer"></span>
+    <a class="tb-link" href="index.html#sitemap">Contents</a>
+    <a class="tb-link" href="https://github.com/slskd/slskd" target="_blank" rel="noopener">GitHub</a>
+    <button class="theme-toggle" aria-label="Toggle dark mode" title="Toggle theme">◐</button>
+  </header>
+  <main class="content">
+<h1>Relay Protocol</h1>
+<p class="page-lede">The Relay lets two or more slskd instances act as a single Soulseek client. One instance — the <strong>Controller</strong> — connects to the Soulseek network and presents itself as the client. One or more <strong>Agents</strong> connect <em>outward</em> to the controller (no inbound ports at the agent) and act as remote file storage: they upload their share databases to the controller, and stream file content on demand. This page specifies the transport, the challenge/response handshake, the SignalR hub and REST surface, the credential algorithm, and each relay flow as an ordered sequence, for engineers building a compatible agent or controller in any language.</p>
+
+<nav class="toc"><div class="toc-title">On this page</div><ul>
+  <li><a href="#concept">Concept &amp; Topology</a></li>
+  <li><a href="#modes">Modes &amp; State Types</a></li>
+  <li><a href="#transport-auth">Transport &amp; Authentication</a></li>
+  <li><a href="#credential-algorithm">Credential Algorithm</a></li>
+  <li><a href="#handshake">Connection &amp; Handshake Sequence</a></li>
+  <li><a href="#hub-methods">RelayHub Methods</a></li>
+  <li><a href="#rest-endpoints">RelayController Endpoints</a></li>
+  <li><a href="#flow-share-upload">Flow: Share Upload</a></li>
+  <li><a href="#flow-file-relay">Flow: File Relay</a></li>
+  <li><a href="#flow-download-relay">Flow: Download Relay</a></li>
+  <li><a href="#flow-lifecycle">Flow: Agent Lifecycle</a></li>
+  <li><a href="#configuration">Configuration Reference</a></li>
+  <li><a href="#security">Security Recap</a></li>
+</ul></nav>
+
+<h2 id="concept">Concept &amp; Topology</h2>
+<p>A relay configuration consists of exactly one <strong>Controller</strong> and one or more <strong>Agents</strong>. The controller is a normal slskd instance that logs in to the Soulseek server and serves the network. Agents do <em>not</em> connect to Soulseek; they connect only to the controller and relay files to it. Conceptually, agents are "remote storage" for the controller.</p>
+<p>Agents always initiate the connection (agent &rarr; controller), so the agent's network needs no port forwarding, inbound firewall rules, or public address. The only trust the agent places outward is in the controller's address. All controller-bound traffic is authenticated and, when the controller is configured for HTTPS, end-to-end encrypted.</p>
+
+<pre><code>            Home network (no inbound ports)          Cloud / public host
+        ┌──────────────────────────────┐      ┌────────────────────────────────┐
+        │                              │      │                                │
+        │   ┌──────────────────┐       │      │   ┌────────────────────────┐   │
+        │   │  Agent           │       │      │   │  Controller            │   │
+        │   │  mode: agent     │ ───── HTTPS ────▶│  mode: controller      │   │
+        │   │  shares: local   │  SignalR /hub/   │  Soulseek client       │   │
+        │   │  files on disk   │  relay  +  REST  │  (logged in as user)   │   │
+        │   └──────────────────┘  POST/GET files  └───────────┬────────────┘   │
+        │       outbound only          │      │               │                │
+        └──────────────────────────────┘      └───────────────┼────────────────┘
+                                                              │ Soulseek wire
+                                                              ▼  protocol
+                                                   ┌────────────────────────┐
+                                                   │  Soulseek server &amp;     │
+                                                   │  remote peers          │
+                                                   └────────────────────────┘
+</code></pre>
+<p>A remote Soulseek peer browsing or downloading from the controller's username transparently receives files that physically reside on an agent; the controller proxies the byte stream. The remote peer is unaware that a relay exists. See <a href="architecture.html">architecture.html</a> for where the Relay sits in the overall topology and <a href="shares.html">shares.html</a> for how agent shares merge into the controller's browse response.</p>
+<p class="src-ref">Source: docs/relay.md</p>
+
+<h2 id="modes">Modes &amp; State Types</h2>
+<p>The operating mode is fixed at startup via <code>relay.mode</code> and read as the <code>RelayMode</code> enum. The enum serializes/parses case-insensitively against its member names.</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Member</th><th>Value</th><th>Config string</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>Controller</code></td><td>0</td><td><code>controller</code></td><td>Connects to Soulseek and accepts inbound agent connections. Default.</td></tr>
+<tr><td><code>Agent</code></td><td>1</td><td><code>agent</code></td><td>Does not connect to Soulseek; connects outward to the controller and relays files.</td></tr>
+<tr><td><code>Debug</code></td><td>2</td><td><code>debug</code></td><td>Operates as both controller and agent in a single process; for development/testing only.</td></tr>
+</tbody>
+</table></div>
+<p class="src-ref">Source: src/slskd/Relay/Types/RelayMode.cs</p>
+
+<p>The agent-side connection lifecycle is tracked by the <code>RelayClientState</code> enum, surfaced through the realtime state (see <a href="realtime-api.html">realtime-api.html</a>). It is a direct translation of the underlying SignalR <code>HubConnectionState</code>.</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Member</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>Disconnected</code></td><td>Not connected to the controller.</td></tr>
+<tr><td><code>Connecting</code></td><td>Initial connection attempt in progress.</td></tr>
+<tr><td><code>Connected</code></td><td>Hub connection established (note: this is the transport state; authentication is tracked separately).</td></tr>
+<tr><td><code>Reconnecting</code></td><td>Automatic reconnection in progress after a dropped connection.</td></tr>
+</tbody>
+</table></div>
+<p class="src-ref">Source: src/slskd/Relay/Types/RelayClientState.cs</p>
+
+<p>On the controller, each authenticated agent is represented by the <code>Agent</code> record. It is exposed in the controller's relay state and used to route hub calls.</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Field (JSON camelCase)</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>name</code></td><td>string</td><td>The agent's configured instance name (matched against <code>relay.agents.&lt;key&gt;.instance_name</code>).</td></tr>
+<tr><td><code>iPAddress</code></td><td>string</td><td>The remote IP address of the active connection (IPv4-mapped IPv6 addresses are normalized to IPv4).</td></tr>
+</tbody>
+</table></div>
+<div class="note callout"><span class="label">Note</span><p>Internally the controller also keeps a connection record pairing the SignalR <code>ConnectionId</code> with the <code>Agent</code>. The <code>ConnectionId</code> is the routing handle for all server&rarr;client hub calls; it is not exposed over the public API.</p></div>
+<p class="src-ref">Source: src/slskd/Relay/Types/Agent.cs, src/slskd/Relay/RelayService.cs</p>
+
+<h2 id="transport-auth">Transport &amp; Authentication</h2>
+<p>An agent connects to the controller over two channels, both targeting the same base address (<code>relay.controller.address</code>, e.g. <code>https://controller.example.com:5031</code>):</p>
+<ul>
+<li><strong>SignalR hub</strong> at <code>/hub/relay</code> — a persistent bidirectional connection used for the handshake, control messages, and request signalling.</li>
+<li><strong>REST endpoints</strong> under <code>/api/v0/relay/controller/...</code> — used to stream bulk payloads (the share database, file content) that do not fit the hub's message-oriented model.</li>
+</ul>
+<p>Two independent secrets gate the connection:</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Secret</th><th>Carried as</th><th>Validated by</th><th>Purpose</th></tr></thead>
+<tbody>
+<tr><td><strong>API key</strong> (<code>relay.controller.api_key</code>)</td><td>SignalR access token (bearer), and the <code>X-API-Key</code> header on REST calls</td><td>The controller's web authentication layer (<code>web.authentication.api_keys</code>)</td><td>Coarse gate: identifies the caller as an authorized API client with a sufficient role. Required to open the hub or call any REST endpoint.</td></tr>
+<tr><td><strong>Per-agent shared secret</strong> (<code>relay.controller.secret</code> on the agent; <code>relay.agents.&lt;key&gt;.secret</code> on the controller)</td><td>A computed credential (never the secret itself) in the hub <code>Login</code> call and the <code>X-Relay-Credential</code> header</td><td>The Relay service, per agent, via challenge/response</td><td>Fine gate: proves the caller is the specific named agent and possesses that agent's secret. Bound to each request token to prevent replay.</td></tr>
+</tbody>
+</table></div>
+<div class="note callout"><span class="label">Note</span><p>The shared secret is <strong>never transmitted</strong>. It is used locally to derive an encryption key; only the encrypted form of a controller-issued token (the "credential") crosses the wire. Possession of the API key alone does not let a caller impersonate an agent or download arbitrary files.</p></div>
+<p>The agent presents the API key as the SignalR bearer access token, configured via <code>AccessTokenProvider</code> on the hub connection. On REST calls it is passed in the <code>X-API-Key</code> header. The API key must map (on the controller) to an entry under <code>web.authentication.api_keys</code> with a sufficient role and an IP/CIDR scope that permits the agent's address. See <a href="authentication.html">authentication.html</a> for API key configuration and roles.</p>
+<p class="src-ref">Source: src/slskd/Relay/RelayClient.cs, src/slskd/Program.cs (MapHub&lt;RelayHub&gt;("/hub/relay"))</p>
+
+<h2 id="credential-algorithm">Credential Algorithm</h2>
+<p>Every authenticated relay operation is bound to a single-use, controller-issued token. The agent answers a token by producing a <em>credential</em>: the token encrypted under a key derived from the shared secret. The controller independently recomputes the expected credential and compares. The algorithm is identical for the login challenge, share-upload tokens, file-stream tokens, and download tokens — only the token value differs.</p>
+<ol>
+<li>Derive a 48-byte key with <strong>PBKDF2 / HMAC-SHA256</strong>, 1000 iterations:<br>
+<code>key = PBKDF2(password = sharedSecret, salt = UTF8(agentInstanceName), prf = HMAC-SHA256, iterations = 1000, length = 48)</code></li>
+<li>Split the 48 bytes into a <strong>32-byte AES-256 key</strong> and a <strong>16-byte IV</strong> (CBC, 128-bit block).</li>
+<li>Encrypt the UTF-8 bytes of the token string: <code>cipher = AES-256-CBC(UTF8(token), key, iv)</code>.</li>
+<li>Encode the ciphertext as <strong>Base62</strong>. The resulting string is the credential.</li>
+</ol>
+<div class="note callout"><span class="label">Important</span><p>The PBKDF2 salt is the agent's <em>instance name</em> (a non-secret identifier), and the IV is derived deterministically from the key material — there is no random nonce. This makes the credential a deterministic function of <code>(secret, instanceName, token)</code>, which is exactly what lets the controller recompute and compare it. Security rests on the secrecy of <code>sharedSecret</code> and the single-use, short-lived nature of each token, <em>not</em> on IV randomness. A compatible agent must reproduce this exact construction.</p></div>
+<p>The challenge token is a random 32-byte value, Base62-encoded, cached against the connection id for only <strong>10 seconds</strong>. Request tokens (share, file, download) are GUIDs cached for their respective windows (see the flow tables). Tokens are validated once and (except download tokens, which permit retries) removed from the cache, preventing replay.</p>
+<p class="src-ref">Source: src/slskd/Relay/RelayClient.cs (ComputeCredential), src/slskd/Relay/RelayService.cs (TryValidateAuthenticationCredential), src/slskd/Common/Cryptography/{Pbkdf2,Aes,Random}.cs</p>
+
+<h2 id="handshake">Connection &amp; Handshake Sequence</h2>
+<p>The handshake begins the instant the SignalR connection is established. The controller drives it by pushing a challenge; the agent answers with <code>Login</code>.</p>
+<ol>
+<li><strong>Agent connects.</strong> The agent opens the SignalR connection to <code>/hub/relay</code>, presenting the API key as the bearer access token. If the controller's relay is disabled or it is not in <code>Controller</code>/<code>Debug</code> mode, the connection is aborted.</li>
+<li><strong>Controller challenges.</strong> On connect, the controller generates a random challenge token, caches it against the connection id (10 s TTL), and invokes the client method <code>Challenge(token)</code>.<br><em>Controller log:</em> <code>Agent connection &lt;id&gt; from &lt;ip&gt; established. Sending authentication challenge &lt;token&gt;...</code></li>
+<li><strong>Agent responds.</strong> The agent computes the credential from the challenge token (see <a href="#credential-algorithm">Credential Algorithm</a>) and invokes the server method <code>Login(agent, challengeResponse)</code>, where <code>agent</code> is its instance name.<br><em>Agent log:</em> <code>Relay controller sent an authentication challenge</code> &rarr; <code>Logging in...</code></li>
+<li><strong>Controller validates</strong>, in order: (a) the supplied agent name matches a configured agent; (b) the remote IP falls within that agent's <code>cidr</code>; (c) the credential equals the controller's recomputed expected value. Any failure throws <code>UnauthorizedAccessException</code> and the agent is deregistered. On success the controller registers the <code>Agent</code> (name + IP) against the connection id.<br><em>Controller log:</em> <code>Agent connection &lt;id&gt; from &lt;ip&gt; authenticated as agent &lt;name&gt;</code></li>
+<li><strong>Agent uploads shares.</strong> Once logged in, the agent proceeds to the share-upload flow (below).</li>
+</ol>
+<div class="note callout warn"><span class="label">Warn</span><p>On reconnect (SignalR automatic reconnect, or a manual restart) the controller issues a <em>new</em> challenge and the agent must re-authenticate and re-upload shares from scratch. The challenge token's 10-second TTL means a compatible agent must answer promptly; a slow responder will fail validation and be retried by the connection loop.</p></div>
+<p class="src-ref">Source: src/slskd/Relay/API/Hubs/RelayHub.cs (OnConnectedAsync, Login), src/slskd/Relay/RelayClient.cs (HandleAuthenticationChallenge)</p>
+
+<h2 id="hub-methods">RelayHub Methods</h2>
+<p>The hub is <code>/hub/relay</code>, decorated <code>[Authorize]</code> (a valid API key is required to connect). Method names below are the exact SignalR invocation names — a compatible agent must register handlers and invoke targets using these literal names. The hub is strongly typed: server&rarr;client calls are defined by the <code>IRelayHub</code> interface.</p>
+
+<h3 id="hub-server-to-client">Server &rarr; Client (controller invokes on agent)</h3>
+<div class="table-wrap"><table>
+<thead><tr><th>Method</th><th>Parameters</th><th>Purpose</th></tr></thead>
+<tbody>
+<tr><td><code>Challenge</code></td><td><code>token: string</code></td><td>Sends the authentication challenge token immediately after connection. The agent replies with <code>Login</code>.</td></tr>
+<tr><td><code>RequestFileInfo</code></td><td><code>filename: string</code>, <code>id: Guid</code></td><td>Asks the agent whether a virtual file exists and its length. The agent replies with <code>ReturnFileInfo</code>.</td></tr>
+<tr><td><code>RequestFileUpload</code></td><td><code>filename: string</code>, <code>startOffset: long</code>, <code>id: Guid</code></td><td>Asks the agent to stream a file (from <code>startOffset</code>) back via <span class="badge post">POST</span> <code>/api/v0/relay/controller/files/{id}</code>. On failure the agent calls <code>NotifyFileUploadFailed</code>.</td></tr>
+<tr><td><code>NotifyFileDownloadCompleted</code></td><td><code>filename: string</code>, <code>id: Guid</code></td><td>Tells the agent a download finished and is ready to pull via <span class="badge get">GET</span> <code>/api/v0/relay/controller/downloads/{id}</code>. Only acted upon if the agent has <code>relay.controller.downloads = true</code>.</td></tr>
+</tbody>
+</table></div>
+
+<h3 id="hub-client-to-server">Client &rarr; Server (agent invokes on controller)</h3>
+<div class="table-wrap"><table>
+<thead><tr><th>Method</th><th>Parameters</th><th>Returns</th><th>Purpose</th></tr></thead>
+<tbody>
+<tr><td><code>Login</code></td><td><code>agent: string</code>, <code>challengeResponse: string</code></td><td>void</td><td>Answers the challenge. Validates agent name, CIDR, and credential; registers the agent on success, throws on failure.</td></tr>
+<tr><td><code>BeginShareUpload</code></td><td>—</td><td><code>Guid</code></td><td>Requests a share-upload token. Requires the agent to be registered (logged in); throws <code>UnauthorizedAccessException</code> otherwise.</td></tr>
+<tr><td><code>ReturnFileInfo</code></td><td><code>id: Guid</code>, <code>exists: bool</code>, <code>length: long</code></td><td>void</td><td>Returns the response to a prior <code>RequestFileInfo</code>.</td></tr>
+<tr><td><code>NotifyFileUploadFailed</code></td><td><code>id: Guid</code>, <code>exception: Exception</code></td><td>void</td><td>Reports that the agent could not fulfil a <code>RequestFileUpload</code>, so the controller need not wait for the timeout.</td></tr>
+</tbody>
+</table></div>
+<div class="note callout"><span class="label">Note</span><p>Hub invocations are signalling only. The controller cannot push a large payload over the hub; instead it sends a token via the hub and the agent <em>pulls/pushes</em> the bytes over a separate authenticated HTTP request. This keeps file streams off the hub's message channel and lets them be processed in-flight without buffering.</p></div>
+<p class="src-ref">Source: src/slskd/Relay/API/Hubs/RelayHub.cs (IRelayHub, RelayHub)</p>
+
+<h2 id="rest-endpoints">RelayController Endpoints</h2>
+<p>All routes are under <code>api/v{version}/relay</code> (API version <code>0</code> &rarr; <code>/api/v0/relay/...</code>). The <code>agent</code> endpoints control the local agent and are JWT-authenticated (operator-facing); the <code>controller/...</code> endpoints receive agent traffic and are API-key-authenticated. Every endpoint also enforces that the relay is enabled and the instance is in a compatible mode, returning <code>403 Forbidden</code> otherwise.</p>
+
+<div class="endpoint"><span class="badge put">PUT</span><span class="path">/api/v0/relay/agent</span><span class="auth"><span class="badge role admin">Administrator</span></span></div>
+<p>Starts the local relay client and connects to the configured controller. Valid only when this instance is in <code>Agent</code>/<code>Debug</code> mode. JWT policy. Returns <code>200 OK</code>. This is what the web UI's "connect" button calls.</p>
+
+<div class="endpoint"><span class="badge delete">DELETE</span><span class="path">/api/v0/relay/agent</span><span class="auth"><span class="badge role admin">Administrator</span></span></div>
+<p>Stops the local relay client and disconnects from the controller. <code>Agent</code>/<code>Debug</code> mode only. JWT policy. Returns <code>204 No Content</code>.</p>
+
+<div class="endpoint"><span class="badge post">POST</span><span class="path">/api/v0/relay/controller/shares/{token}</span><span class="auth"><span class="badge role readwrite">ReadWrite</span> <span class="badge role admin">Administrator</span></span></div>
+<p>Agent &rarr; controller. Uploads the agent's share database. <code>Controller</code>/<code>Debug</code> mode only; API-key policy, role ReadWrite or Administrator. <code>multipart/form-data</code> body with a JSON <code>shares</code> field and a database file part. Headers <code>X-Relay-Agent</code> (instance name) and <code>X-Relay-Credential</code> required. Request size limit: 1 TiB.</p>
+
+<div class="endpoint"><span class="badge post">POST</span><span class="path">/api/v0/relay/controller/files/{token}</span><span class="auth"><span class="badge role readwrite">ReadWrite</span> <span class="badge role admin">Administrator</span></span></div>
+<p>Agent &rarr; controller. Streams a requested file's content. <code>Controller</code>/<code>Debug</code> mode only; API-key policy, role ReadWrite or Administrator. <code>multipart/form-data</code> with a single file part; the stream is read in-flight (no buffering) and forwarded straight to the waiting Soulseek upload. Headers <code>X-Relay-Agent</code> and <code>X-Relay-Credential</code> required. Request size limit: 10 TiB. The <code>{token}</code> matches the <code>id</code> from <code>RequestFileUpload</code>.</p>
+
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/relay/controller/downloads/{token}</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Agent &rarr; controller. Retrieves a completed download file the controller advertised via <code>NotifyFileDownloadCompleted</code>. <code>Controller</code>/<code>Debug</code> mode only; API-key policy, role Any. Headers <code>X-Relay-Agent</code>, <code>X-Relay-Credential</code>, and <code>X-Relay-Filename-Base64</code> (the requested filename, Base64-encoded) required. Returns the file as <code>application/octet-stream</code>. Unlike the other endpoints the token is <em>not</em> consumed on validation, to permit retries.</p>
+
+<div class="table-wrap"><table>
+<thead><tr><th>Method</th><th>Path</th><th>Auth policy</th><th>Role</th><th>Direction</th><th>Purpose</th></tr></thead>
+<tbody>
+<tr><td><span class="badge put">PUT</span></td><td><code>/api/v0/relay/agent</code></td><td>JWT</td><td><span class="badge role admin">Administrator</span></td><td>operator</td><td>Start the local agent / connect.</td></tr>
+<tr><td><span class="badge delete">DELETE</span></td><td><code>/api/v0/relay/agent</code></td><td>JWT</td><td><span class="badge role admin">Administrator</span></td><td>operator</td><td>Stop the local agent / disconnect.</td></tr>
+<tr><td><span class="badge post">POST</span></td><td><code>/api/v0/relay/controller/shares/{token}</code></td><td>API key</td><td><span class="badge role readwrite">ReadWrite</span>/<span class="badge role admin">Admin</span></td><td>agent&rarr;controller</td><td>Upload share database.</td></tr>
+<tr><td><span class="badge post">POST</span></td><td><code>/api/v0/relay/controller/files/{token}</code></td><td>API key</td><td><span class="badge role readwrite">ReadWrite</span>/<span class="badge role admin">Admin</span></td><td>agent&rarr;controller</td><td>Stream a requested file.</td></tr>
+<tr><td><span class="badge get">GET</span></td><td><code>/api/v0/relay/controller/downloads/{token}</code></td><td>API key</td><td><span class="badge role any">Any</span></td><td>agent&rarr;controller</td><td>Pull a completed download.</td></tr>
+</tbody>
+</table></div>
+<div class="note callout"><span class="label">Note</span><p>The <code>agent</code> endpoints require an <strong>Administrator</strong> role under the JWT policy — they are operator controls on the agent instance, not part of agent&harr;controller traffic. The brief's expectation of a ReadWrite role applies to the <code>controller/shares</code> and <code>controller/files</code> upload endpoints, which is what an agent actually calls. The <code>controller/downloads</code> endpoint accepts any role because its real gate is the per-file relay credential.</p></div>
+<p class="src-ref">Source: src/slskd/Relay/API/Controllers/RelayController.cs; roles from src/slskd/Common/Authentication/{AuthPolicy,AuthRole}.cs</p>
+
+<h2 id="flow-share-upload">Flow: Share Upload</h2>
+<p>After login, the agent publishes its shares so the controller can advertise them to the Soulseek network. This also happens on every reconnect, and whenever the agent's local shares change (<code>SynchronizeAsync</code>).</p>
+<ol>
+<li>Agent backs up its share database to a temporary file and serializes its list of shares to JSON.</li>
+<li>Agent invokes hub <code>BeginShareUpload()</code> &rarr; controller generates a GUID token, caches it against the agent name (5-minute TTL), and returns it.</li>
+<li>Agent <span class="badge post">POST</span>s to <code>/api/v0/relay/controller/shares/{token}</code> a <code>multipart/form-data</code> body containing a <code>shares</code> field (JSON) and a <code>database</code> file part (the SQLite share DB), with headers <code>X-API-Key</code>, <code>X-Relay-Agent</code>, and <code>X-Relay-Credential</code> (credential = encrypted token).</li>
+<li>Controller validates the credential against the cached share token, writes the DB to a temp file, validates it, then loads it as a share <em>host</em> named after the agent and warms the browse cache.</li>
+<li>Controller responds <code>200 OK</code>; the agent logs "Shares uploaded. Ready to relay files."</li>
+</ol>
+<div class="note callout"><span class="label">Note</span><p>The uploaded <code>shares</code> JSON is the same <code>Share</code> shape used elsewhere in slskd (see <a href="shares.html">shares.html</a> and <a href="data-model.html">data-model.html</a>). The controller merges each agent's host into its aggregate browse response, so remote peers see a unified directory tree.</p></div>
+<p class="src-ref">Source: src/slskd/Relay/RelayClient.cs (UploadSharesAsync), RelayController.cs (UploadShares), RelayService.cs (GenerateShareUploadToken, HandleShareUploadAsync)</p>
+
+<h2 id="flow-file-relay">Flow: File Relay</h2>
+<p>When a remote Soulseek peer downloads a file that physically lives on an agent, the controller proxies the byte stream from the agent through to the peer without ever staging the whole file. The upload service resolves the virtual path to <code>(host, physicalPath)</code>; <code>host</code> is the agent name.</p>
+
+<h3 id="file-info-request">File-info request (pre-flight)</h3>
+<p>Before transferring, the controller confirms the file exists on the agent and learns its length:</p>
+<ol>
+<li>Controller invokes hub <code>RequestFileInfo(filename, id)</code> on the resolved agent and awaits a response (default 3 s timeout).</li>
+<li>Agent resolves the virtual filename to a local path, stats it, and invokes <code>ReturnFileInfo(id, exists, length)</code>.</li>
+<li>Controller uses the result to validate the share against disk before starting the transfer.</li>
+</ol>
+<div class="note callout"><span class="label">Note</span><p>The file-info round-trip can be skipped if the controller is configured with <code>OptimisticRelayFileInfo</code> (it then trusts the uploaded share metadata instead of querying the agent). Default: off.</p></div>
+
+<h3 id="file-content-relay">File content relay</h3>
+<ol>
+<li>Controller resolves the virtual path to an agent + physical file.<br><em>Log:</em> <code>Resolved &lt;virtual&gt; to physical file &lt;path&gt; on host '&lt;agent&gt;'</code></li>
+<li>Controller caches a file token (a GUID <code>id</code>) against the agent name (TTL = the request timeout), then invokes hub <code>RequestFileUpload(filename, startOffset, id)</code> and waits for the stream.</li>
+<li>Agent opens the local file, seeks to <code>startOffset</code>, and <span class="badge post">POST</span>s it to <code>/api/v0/relay/controller/files/{id}</code> as <code>multipart/form-data</code>, with headers <code>X-API-Key</code>, <code>X-Relay-Agent</code>, <code>X-Relay-Credential</code>.</li>
+<li>Controller validates the credential against the cached file token, captures the request body stream in-flight, and feeds it directly into the Soulseek upload to the remote peer. The HTTP request stays open for the entire transfer.</li>
+<li>When the Soulseek upload completes, the controller completes the HTTP request (<code>200 OK</code>); the agent logs upload success.</li>
+<li>If the agent cannot serve the file (missing/locked), it invokes hub <code>NotifyFileUploadFailed(id, exception)</code> so the controller fails fast instead of waiting for timeout.</li>
+</ol>
+<div class="note callout tip"><span class="label">Tip</span><p>The <code>startOffset</code> parameter means relayed uploads support resume: a peer reconnecting mid-transfer causes the agent to seek and stream from the requested byte, exactly like a non-relayed upload.</p></div>
+<p class="src-ref">Source: src/slskd/Relay/RelayService.cs (GetFileInfoAsync, GetFileStreamAsync, HandleFileStreamResponseAsync), RelayClient.cs (HandleFileInfoRequest, HandleFileUploadRequest), RelayController.cs (UploadFile), src/slskd/Transfers/Uploads/UploadService.cs</p>
+
+<h2 id="flow-download-relay">Flow: Download Relay</h2>
+<p>Optionally, completed <em>downloads</em> (files the controller fetched from the Soulseek network on the user's behalf) can be pushed back to agents, so the files land on home storage rather than the cloud controller. Enabled per-agent with <code>relay.controller.downloads = true</code>.</p>
+<ol>
+<li>A download completes on the controller. For each registered agent the controller caches a download token (GUID <code>id</code>) against the agent name (10-minute TTL) and invokes hub <code>NotifyFileDownloadCompleted(filename, id)</code>, where <code>filename</code> is relative to the controller's downloads directory.</li>
+<li>An agent with <code>downloads = true</code> issues a <span class="badge get">GET</span> to <code>/api/v0/relay/controller/downloads/{id}</code> with headers <code>X-API-Key</code>, <code>X-Relay-Agent</code>, <code>X-Relay-Credential</code>, and <code>X-Relay-Filename-Base64</code> (the filename, Base64-encoded).</li>
+<li>Controller validates the credential against the cached download token <em>and</em> the supplied filename, then streams the file as <code>application/octet-stream</code>. The token is preserved (not consumed) to permit retries.</li>
+<li>Agent writes the stream to its local downloads directory, localizing the path for its OS (handling Windows&harr;Linux path separators). The agent retries up to 3 times on failure.</li>
+</ol>
+<div class="note callout"><span class="label">Note</span><p>Agents with <code>downloads = false</code> silently ignore <code>NotifyFileDownloadCompleted</code> and never call the endpoint. The controller still notifies all agents; suppression happens client-side.</p></div>
+<p class="src-ref">Source: src/slskd/Relay/RelayService.cs (NotifyFileDownloadCompleteAsync), RelayClient.cs (HandleNotifyFileDownloadCompleted), RelayController.cs (DownloadFile)</p>
+
+<h2 id="flow-lifecycle">Flow: Agent Lifecycle</h2>
+<p>The agent's connection is managed automatically by the relay client, but can also be controlled through the operator API.</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Event</th><th>Trigger</th><th>Effect</th></tr></thead>
+<tbody>
+<tr><td>Register / connect</td><td><span class="badge put">PUT</span> <code>/api/v0/relay/agent</code>, or automatic on startup when <code>relay.enabled</code> &amp; mode <code>agent</code></td><td>Starts the hub connection retry loop (indefinite, exponential backoff 1&ndash;30 s), runs the handshake, uploads shares.</td></tr>
+<tr><td>Deregister / disconnect</td><td><span class="badge delete">DELETE</span> <code>/api/v0/relay/agent</code></td><td>Stops the hub connection; state &rarr; <code>Disconnected</code>.</td></tr>
+<tr><td>Drop &amp; reconnect</td><td>SignalR automatic reconnect (interval policy 0,1,3,10,30,60 s)</td><td>On reconnect the agent re-runs login and re-uploads shares; controller deregisters the old connection record on disconnect.</td></tr>
+<tr><td>Config change</td><td>Change to <code>relay.controller.*</code> at runtime</td><td>Agent rebuilds the hub connection and reconnects with the new settings.</td></tr>
+</tbody>
+</table></div>
+<p>On disconnect the controller removes the agent's connection record and its name registration, so its shares stop being served until it reconnects and re-uploads. A compatible controller implementation must treat agent registration as connection-scoped, not persistent.</p>
+<p class="src-ref">Source: src/slskd/Relay/RelayClient.cs (StartAsync, StopAsync, Configure, reconnect handlers), RelayHub.cs (OnDisconnectedAsync), RelayController.cs (Connect, Disconnect)</p>
+
+<h2 id="configuration">Configuration Reference</h2>
+<p>Relay configuration lives under the top-level <code>relay</code> key (plus <code>web.authentication.api_keys</code> for the controller's API keys). Mode and enablement require a restart to change.</p>
+
+<h3 id="config-controller">Controller</h3>
+<pre><code>instance_name: controller
+relay:
+  enabled: true
+  mode: controller
+  agents:
+    example:                       # arbitrary map key
+      instance_name: example_agent # must match the agent's top-level instance_name
+      secret: &lt;16&ndash;255 char shared secret, unique per agent&gt;
+      cidr: 192.168.1.0/24         # optional; default 0.0.0.0/0,::/0 (any)
+web:
+  authentication:
+    api_keys:
+      example_api_key:
+        key: &lt;16&ndash;255 char API key&gt;
+        role: readwrite            # required for agent upload endpoints
+        cidr: 192.168.1.0/24       # optional scope</code></pre>
+
+<h3 id="config-agent">Agent</h3>
+<pre><code>instance_name: example_agent       # must equal the controller's agents.&lt;key&gt;.instance_name
+relay:
+  enabled: true
+  mode: agent
+  controller:
+    address: https://192.168.1.241:5031
+    ignore_certificate_errors: true  # needed for self-signed certs
+    api_key: &lt;controller API key&gt;
+    secret: &lt;matches controller agents.&lt;key&gt;.secret&gt;
+    downloads: true                  # pull completed downloads back to this agent
+shares:
+  directories:
+    - /home/user/Music</code></pre>
+
+<div class="table-wrap"><table>
+<thead><tr><th>Key</th><th>Applies to</th><th>Type / default</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>relay.enabled</code></td><td>both</td><td>bool, <code>false</code></td><td>Master switch. CLI <code>-r/--relay</code>, env <code>SLSKD_RELAY</code>. Requires restart.</td></tr>
+<tr><td><code>relay.mode</code></td><td>both</td><td>string, <code>controller</code></td><td><code>controller</code> | <code>agent</code> | <code>debug</code>. CLI <code>-m/--relay-mode</code>, env <code>SLSKD_RELAY_MODE</code>. Requires restart.</td></tr>
+<tr><td><code>relay.agents.&lt;key&gt;.instance_name</code></td><td>controller</td><td>string (1&ndash;255)</td><td>The agent's instance name. Must be unique across agents.</td></tr>
+<tr><td><code>relay.agents.&lt;key&gt;.secret</code></td><td>controller</td><td>string (16&ndash;255)</td><td>Shared secret for this agent; must match the agent's <code>controller.secret</code>.</td></tr>
+<tr><td><code>relay.agents.&lt;key&gt;.cidr</code></td><td>controller</td><td>string, <code>0.0.0.0/0,::/0</code></td><td>Comma-separated CIDRs allowed to connect as this agent. IPv4-mapped IPv6 (<code>::ffff:*</code>) is rejected in config.</td></tr>
+<tr><td><code>relay.controller.address</code></td><td>agent</td><td>URL</td><td>Controller base URL (http/https). CLI <code>--controller-address</code>.</td></tr>
+<tr><td><code>relay.controller.api_key</code></td><td>agent</td><td>string (16&ndash;255)</td><td>API key for the controller. CLI <code>--controller-api-key</code>.</td></tr>
+<tr><td><code>relay.controller.secret</code></td><td>agent</td><td>string (16&ndash;255)</td><td>This agent's shared secret. CLI <code>--controller-secret</code>.</td></tr>
+<tr><td><code>relay.controller.ignore_certificate_errors</code></td><td>agent</td><td>bool, <code>false</code></td><td>Skip TLS validation (for self-signed controller certs). CLI <code>--controller-ignore-certificate-errors</code>.</td></tr>
+<tr><td><code>relay.controller.downloads</code></td><td>agent</td><td>bool, <code>false</code></td><td>Pull completed downloads from the controller. CLI <code>--controller-downloads</code>.</td></tr>
+</tbody>
+</table></div>
+<div class="note callout warn"><span class="label">Warn</span><p>When in <code>Agent</code> mode the instance's top-level <code>instance_name</code> must <strong>not</strong> be the default host name — validation rejects it. The instance name doubles as the PBKDF2 salt and the identity presented at <code>Login</code>, so it must exactly match the controller's <code>instance_name</code> for that agent.</p></div>
+<p class="src-ref">Source: src/slskd/Core/Options.cs (RelayOptions), docs/config.md</p>
+
+<h2 id="security">Security Recap</h2>
+<ul>
+<li><strong>Agents initiate everything.</strong> No inbound ports, firewall holes, or public address are needed at the agent. The agent trusts only the controller's URL.</li>
+<li><strong>Two-factor gating.</strong> Every controller-bound request requires both a valid API key (coarse, role/CIDR-scoped at <code>web.authentication.api_keys</code>) and a per-agent credential derived from the shared secret (fine, per-agent, replay-resistant).</li>
+<li><strong>The shared secret never leaves the agent.</strong> Only encrypted, single-use, short-lived token credentials cross the wire.</li>
+<li><strong>CIDR scoping at two layers.</strong> The agent's <code>cidr</code> restricts which source IPs may authenticate as that agent (checked at <code>Login</code>), and the API key's <code>cidr</code> independently restricts where the key may be used. Even if both secrets leak, an attacker outside the CIDR ranges is rejected.</li>
+<li><strong>HTTPS recommended.</strong> When the controller forces HTTPS, all hub and REST traffic — including the API key and credentials — is encrypted in transit.</li>
+<li><strong>Path-traversal defense in depth.</strong> Filenames in every relay endpoint are rejected if they contain traversal segments, and physical paths are resolved with safe-combine helpers.</li>
+</ul>
+<p>For API key creation, roles, and JWT auth used by the operator-facing <code>agent</code> endpoints, see <a href="authentication.html">authentication.html</a>. For the hub transport conventions shared with other realtime features, see <a href="realtime-api.html">realtime-api.html</a>.</p>
+<p class="src-ref">Source: docs/relay.md ("Is Relay Mode Secure?"), src/slskd/Relay/*</p>
+
+    <div class="page-nav-links">
+      <a class="prev" href="realtime-api.html"><span class="dir">&larr; Previous</span><br><span class="ttl">Real-Time API &amp; Events</span></a>
+      <span></span>
+    </div>
+    <footer class="page-footer">
+      <span>slskd / Soulseek Protocol &amp; Model Specification &middot; derived from source (slskd, Soulseek.NET 10.0.1) &middot; AGPL-3.0</span>
+      <span>Not an official Soulseek document.</span>
+    </footer>
+  </main>
+</div>
+</div>
+<script src="script.js"></script>
+</body>
+</html>

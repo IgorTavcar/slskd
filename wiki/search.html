@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Search · slskd Protocol &amp; Model Specification</title>
+<meta name="description" content="slskd / Soulseek network, protocol and data-model specification — Search. A language-agnostic reference for building clients, apps and services that interoperate with the Soulseek platform.">
+<link rel="stylesheet" href="style.css">
+<script>(function(){try{var t=localStorage.getItem('slskd-spec-theme');if(t){document.documentElement.setAttribute('data-theme',t);}else if(window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches){document.documentElement.setAttribute('data-theme','dark');}}catch(e){}})();</script>
+</head>
+<body>
+<div class="scrim"></div>
+<div class="layout">
+<aside class="sidebar">
+  <div class="brand">
+    <div class="logo">sd</div>
+    <div class="brand-text">
+      <span class="brand-title">slskd Spec</span>
+      <span class="brand-sub">Soulseek protocol &amp; model</span>
+    </div>
+  </div>
+  <div class="nav-filter-wrap"><input class="nav-filter" type="text" placeholder="Filter pages…" aria-label="Filter pages"></div>
+  <nav>
+  <div class="nav-group-label">Introduction</div>
+  <ul>
+    <li><a href="index.html"><span class="nav-num">1</span><span>Overview</span></a></li>
+    <li><a href="architecture.html"><span class="nav-num">2</span><span>Architecture &amp; Concepts</span></a></li>
+  </ul>
+  <div class="nav-group-label">The Soulseek Network</div>
+  <ul>
+    <li><a href="soulseek-protocol.html"><span class="nav-num">3</span><span>Soulseek Wire Protocol</span></a></li>
+    <li><a href="data-model.html"><span class="nav-num">4</span><span>Data Model &amp; Types</span></a></li>
+  </ul>
+  <div class="nav-group-label">Domains</div>
+  <ul>
+    <li class="active"><a href="search.html" aria-current="page"><span class="nav-num">5</span><span>Search</span></a></li>
+    <li><a href="transfers.html"><span class="nav-num">6</span><span>Transfers &amp; Queueing</span></a></li>
+    <li><a href="users-rooms.html"><span class="nav-num">7</span><span>Users, Rooms &amp; Chat</span></a></li>
+    <li><a href="shares.html"><span class="nav-num">8</span><span>Shares &amp; Browsing</span></a></li>
+  </ul>
+  <div class="nav-group-label">Integration</div>
+  <ul>
+    <li><a href="authentication.html"><span class="nav-num">9</span><span>Authentication &amp; Security</span></a></li>
+    <li><a href="rest-api.html"><span class="nav-num">10</span><span>REST API Reference</span></a></li>
+    <li><a href="realtime-api.html"><span class="nav-num">11</span><span>Real-Time API &amp; Events</span></a></li>
+    <li><a href="relay.html"><span class="nav-num">12</span><span>Relay Protocol</span></a></li>
+  </ul>
+</nav>
+</aside>
+<div class="main-col">
+  <header class="topbar">
+    <button class="menu-btn" aria-label="Toggle navigation">&#9776;</button>
+    <span class="crumb">Domains / <b>Search</b></span>
+    <span class="spacer"></span>
+    <a class="tb-link" href="index.html#sitemap">Contents</a>
+    <a class="tb-link" href="https://github.com/slskd/slskd" target="_blank" rel="noopener">GitHub</a>
+    <button class="theme-toggle" aria-label="Toggle dark mode" title="Toggle theme">◐</button>
+  </header>
+  <main class="content">
+
+<h1>Search</h1>
+<p class="page-lede">A search asks the Soulseek network "who has files matching this text?" and accumulates replies from peers over a short, bounded time window. This page documents the full search life cycle in slskd — the REST endpoints used to create, poll, stop and delete a search; the SignalR hub used to stream responses as they arrive; the option/limit knobs that govern how long a search runs and which responses are accepted; the underlying wire behaviour (<code>FileSearch</code> out, <code>SearchResponse</code> in, propagated through the distributed peer tree); and the client-side filter grammar that the slskd web UI applies to the accumulated results. Field names and defaults are grounded in slskd source and in the underlying Soulseek.NET library.</p>
+
+<nav class="toc">
+  <div class="toc-title">On this page</div>
+  <ul>
+    <li><a href="#lifecycle">Search life cycle</a></li>
+    <li><a href="#states">Search states</a></li>
+    <li><a href="#network">How a search travels the network</a></li>
+    <li><a href="#scope">Search scope</a></li>
+    <li><a href="#options">Search options &amp; limits</a></li>
+    <li><a href="#rest">REST endpoints</a></li>
+    <li><a href="#realtime">Real-time streaming (SearchHub)</a></li>
+    <li><a href="#response-shape">Response &amp; file shape</a></li>
+    <li><a href="#filter-grammar">Client-side result filter grammar</a></li>
+    <li><a href="#server-filter">Server-side response filtering</a></li>
+    <li><a href="#notes">Operational notes</a></li>
+  </ul>
+</nav>
+
+<h2 id="lifecycle">Search life cycle</h2>
+<p>A search in slskd is a persisted record with two identifiers: a <span class="type">Guid</span> <code>id</code> chosen by the client (or generated by the server if omitted) and a numeric <span class="type">int32</span> <code>token</code> allocated by the Soulseek client and embedded in the wire request. The <code>id</code> is the handle used for all REST/SignalR operations; the <code>token</code> is how the server and peers correlate replies on the network.</p>
+<ol>
+  <li><strong>Create.</strong> The client <span class="badge post">POST</span>s to <code>/api/v0/searches</code> with a body containing <code>searchText</code> (and optionally <code>id</code> and option overrides). The controller serializes search creation through a single-permit semaphore — <strong>only one search may be initiated at a time</strong>; a concurrent request receives <code>429</code>.</li>
+  <li><strong>Persist &amp; broadcast.</strong> slskd immediately writes a record in state <code>Requested</code>, broadcasts <code>CREATE</code> over the SearchHub, and calls <code>SoulseekClient.SearchAsync</code>, which emits a <code>FileSearch</code> message to the server with the allocated token.</li>
+  <li><strong>Run.</strong> Matching peers connect back and deliver <code>SearchResponse</code> messages. Soulseek.NET raises a state transition to <code>InProgress</code> and invokes the response handler for each accepted response. slskd accumulates responses in memory and pushes rate-limited count updates (<code>UPDATE</code>) and per-response payloads (<code>RESPONSE</code>) over the hub.</li>
+  <li><strong>Complete.</strong> The search ends when its timeout elapses (measured from the last response), a limit is reached, it is cancelled, or it errors. The terminal state always carries the <code>Completed</code> flag, plus zero or more sub-flags (<a href="#states">below</a>). The final record is persisted with the accumulated responses and an <code>endedAt</code> timestamp; an <code>UPDATE</code> is broadcast with responses stripped.</li>
+  <li><strong>Retrieve / delete.</strong> The client polls <code>GET /searches/{id}</code> (optionally with responses) or relies on the hub stream, then optionally <code>DELETE</code>s the record. slskd also prunes completed searches older than a configurable retention age.</li>
+</ol>
+<div class="note callout"><span class="label">Note</span><p>The <span class="badge post">POST</span> returns as soon as the search has been <em>initiated</em> — it returns the newly created record (typically in state <code>Requested</code>/<code>InProgress</code> with zero responses), <strong>not</strong> the completed result. Despite the API doc-comment "The search completed successfully", responses are gathered asynchronously on a background task; the caller must poll <code>GET /searches/{id}</code> or subscribe to the SearchHub to observe completion and results.</p></div>
+<p class="src-ref">Source: src/slskd/Search/API/Controllers/SearchesController.cs, src/slskd/Search/SearchService.cs (<code>StartAsync</code>)</p>
+
+<h2 id="states">Search states</h2>
+<p>The <code>state</code> field is a <strong>bit-flag</strong> set (<code>[Flags]</code> enum <code>Soulseek.SearchStates</code>). A search is "done" when <code>(state &amp; Completed) != 0</code>; slskd surfaces this as the derived boolean <code>isComplete</code> on the <a href="#response-shape">Search record</a>. The reason for completion is conveyed by the additional flags OR-ed alongside <code>Completed</code>.</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Flag</th><th>Value</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>None</code></td><td><span class="type">0</span></td><td>No state.</td></tr>
+<tr><td><code>Requested</code></td><td><span class="type">1</span></td><td>The search has been created and the <code>FileSearch</code> request is about to be / has been sent. Initial state written by slskd.</td></tr>
+<tr><td><code>InProgress</code></td><td><span class="type">2</span></td><td>The request is on the network and responses are being accepted.</td></tr>
+<tr><td><code>Completed</code></td><td><span class="type">4</span></td><td>The search has finished. Always present in a terminal state; combine with sub-flags below.</td></tr>
+<tr><td><code>Cancelled</code></td><td><span class="type">8</span></td><td>Completed because the client called <span class="badge put">PUT</span> <code>/searches/{id}</code> (cancellation token tripped).</td></tr>
+<tr><td><code>TimedOut</code></td><td><span class="type">16</span></td><td>Completed because the inter-response timeout (<code>searchTimeout</code>) elapsed. This is the normal, expected completion reason.</td></tr>
+<tr><td><code>ResponseLimitReached</code></td><td><span class="type">32</span></td><td>Completed because the number of accepted responses reached <code>responseLimit</code>.</td></tr>
+<tr><td><code>FileLimitReached</code></td><td><span class="type">64</span></td><td>Completed because the cumulative number of accepted files reached <code>fileLimit</code>.</td></tr>
+<tr><td><code>Errored</code></td><td><span class="type">128</span></td><td>Completed abnormally (exception during execution, e.g. the client was disconnected). slskd also sets this if it must finalize a search whose normal completion was never observed.</td></tr>
+<tr><td><code>Queued</code></td><td><span class="type">256</span></td><td>Defined by Soulseek.NET; not used by slskd's standard network-scope search flow.</td></tr>
+</tbody>
+</table>
+</div>
+<p>Typical terminal values seen over the API (the JSON serializes the flag set as a comma-joined string, e.g. <code>"Completed, TimedOut"</code>):</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Serialized <code>state</code></th><th>Numeric</th><th>Interpretation</th></tr></thead>
+<tbody>
+<tr><td><code>"Completed, TimedOut"</code></td><td>20</td><td>Normal completion (timeout reached after last response).</td></tr>
+<tr><td><code>"Completed, ResponseLimitReached"</code></td><td>36</td><td>Stopped early — enough responses.</td></tr>
+<tr><td><code>"Completed, FileLimitReached"</code></td><td>68</td><td>Stopped early — enough files.</td></tr>
+<tr><td><code>"Completed, Cancelled"</code></td><td>12</td><td>Stopped by the user via PUT.</td></tr>
+<tr><td><code>"Completed, Errored"</code></td><td>132</td><td>Failed (e.g. server disconnect).</td></tr>
+<tr><td><code>"InProgress"</code></td><td>2</td><td>Still running.</td></tr>
+</tbody>
+</table>
+</div>
+<div class="warn callout"><span class="label">Cancellation semantics</span><p><span class="badge put">PUT</span> <code>/searches/{id}</code> trips the cancellation token only while the search is actively in progress (slskd holds the token in an in-memory dictionary keyed by <code>id</code> and removes it on completion). If the search has already completed, <code>TryCancel</code> returns <code>false</code> internally; the controller still returns <code>200 OK</code> regardless of whether anything was actually cancelled. A search that has already finished cannot be re-stopped.</p></div>
+<p class="src-ref">Source: <code>Soulseek.SearchStates</code> (Soulseek.NET <code>src/SearchStates.cs</code>); slskd src/slskd/Search/Types/Search.cs (<code>IsComplete</code>), src/slskd/Search/SearchService.cs</p>
+
+<h2 id="network">How a search travels the network</h2>
+<p>slskd does not query peers directly. It hands the query to the central server, which injects it into the distributed peer tree; peers that find matches open a peer connection back to the searcher and deliver results. The mechanics are fully specified on the <a href="soulseek-protocol.html#search-delivery">Soulseek Wire Protocol</a> page; the essentials as they pertain to a slskd search:</p>
+<ol>
+  <li><strong>Submit.</strong> slskd allocates a <span class="type">uint32</span> token (<code>Client.GetNextToken()</code>) and sends server message <strong>FileSearch (code&nbsp;26)</strong> <code>{ token, query }</code>. For non-network scopes the corresponding server message is used instead (see <a href="#scope">Search scope</a>).</li>
+  <li><strong>Propagate.</strong> The server forwards the request down the distributed tree as a <code>DistributedSearchRequest</code>. Each participating peer matches it against its own share index.</li>
+  <li><strong>Reply.</strong> A peer with matches connects to the searcher over a peer connection and sends <strong>SearchResponse (code&nbsp;9)</strong> — a <strong>zlib-compressed</strong> payload carrying <code>username</code>, the echoed <code>token</code>, the matching <code>files[]</code>, a free-slot flag, average upload speed, queue length, and <code>lockedFiles[]</code>.</li>
+  <li><strong>Correlate.</strong> Soulseek.NET matches the response token to the active search, applies the <a href="#options">acceptance filters</a>, and invokes slskd's response handler. There is no explicit "search finished" message on the wire — completion is determined locally by the inter-response timeout or a configured limit.</li>
+</ol>
+<div class="note callout"><span class="label">Note</span><p>Because results arrive over independent peer connections and completion is timeout-driven, a search is inherently <em>best-effort</em>: the absence of a result for a given user does not prove the user lacks the file (they may be offline, firewalled, slow to respond, or filtered out by an acceptance option). See <a href="architecture.html">Architecture &amp; Concepts</a> for the distributed-network model.</p></div>
+<p class="src-ref">Source: src/slskd/Search/SearchService.cs (<code>Client.SearchAsync</code>, line ~309); message codes per <a href="soulseek-protocol.html#search-delivery">soulseek-protocol.html</a> (Soulseek.NET <code>MessageCode</code>)</p>
+
+<h2 id="scope">Search scope</h2>
+<p>Soulseek supports several search scopes, modelled by <code>Soulseek.SearchScope</code> / <code>SearchScopeType</code>. Each maps to a different server message on the wire.</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th><code>SearchScopeType</code></th><th>Value</th><th>Subjects</th><th>Server message</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>Network</code></td><td><span class="type">0</span></td><td>none</td><td>FileSearch (code&nbsp;26)</td><td>Global search broadcast across the distributed network. <strong>The only scope slskd's REST API exposes today.</strong></td></tr>
+<tr><td><code>User</code></td><td><span class="type">1</span></td><td>1+ usernames</td><td>UserSearch (code&nbsp;42)</td><td>Search a specific user's shares.</td></tr>
+<tr><td><code>Room</code></td><td><span class="type">2</span></td><td>exactly 1 room</td><td>RoomSearch (code&nbsp;120)</td><td>Search the shares of members of a chat room.</td></tr>
+<tr><td><code>Wishlist</code></td><td><span class="type">3</span></td><td>none</td><td>WishlistSearch (code&nbsp;103)</td><td>Periodic server-driven re-search; not driven by this controller.</td></tr>
+</tbody>
+</table>
+</div>
+<div class="warn callout"><span class="label">slskd limitation</span><p>The slskd <code>SearchesController</code> hard-codes <code>SearchScope.Network</code>: <code>Searches.StartAsync(id, SearchQuery.FromText(request.SearchText), SearchScope.Network, …)</code>. There is no request field to select a user or room scope. The underlying <code>ISearchService.StartAsync</code> and Soulseek.NET both accept any scope, but it is not reachable through the public API in this revision. The DTO even carries a <code>// todo: adjust this when additional search inputs are made available</code> note. Clients needing user/room search must drive Soulseek.NET directly.</p></div>
+<p class="src-ref">Source: src/slskd/Search/API/Controllers/SearchesController.cs:107; <code>Soulseek.SearchScope</code>, <code>Soulseek.SearchScopeType</code> (Soulseek.NET); server message codes per <a href="soulseek-protocol.html#domains">soulseek-protocol.html</a></p>
+
+<h3 id="query-parsing">Query parsing &amp; exclusions</h3>
+<p>The <code>searchText</code> string is parsed by <code>SearchQuery.FromText</code> (Soulseek.NET). Whitespace splits it into tokens; any token beginning with <code>-</code> and longer than one character becomes an <strong>exclusion</strong> term (with the leading <code>-</code> stripped, de-duplicated), and the remaining tokens are positive <strong>terms</strong>. Exclusions are sent as part of the wire query. Separately, the <code>removeSingleCharacterSearchTerms</code> option (default <code>true</code> in Soulseek.NET; not exposed by slskd's DTO) drops one-character terms before transmission.</p>
+<pre><code>searchText = "aphex twin selected ambient -live -bootleg"
+  terms      = ["aphex", "twin", "selected", "ambient"]
+  exclusions = ["live", "bootleg"]</code></pre>
+<div class="note callout"><span class="label">Note</span><p>This server-side exclusion parsing (<code>-term</code>) is distinct from the slskd web UI's <a href="#filter-grammar">client-side filter grammar</a>, which also uses <code>-term</code> but evaluates it locally against already-received filenames. Both can be present in the same string.</p></div>
+<p class="src-ref">Source: <code>Soulseek.SearchQuery</code> (Soulseek.NET <code>src/SearchQuery.cs</code>)</p>
+
+<h2 id="options">Search options &amp; limits</h2>
+<p>The POST body may carry per-search overrides. Any omitted option falls back to the default of <code>new Soulseek.SearchOptions()</code> (the mapping is <code>RequestValue ?? defaultValue</code> in <code>SearchRequest.ToSearchOptions</code>). These options govern when a search completes and which responses are <em>accepted</em> (counted and forwarded to the handler) versus silently dropped.</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Field (JSON)</th><th>Type</th><th>Validation</th><th>Effective default</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>id</code></td><td><span class="type">guid?</span></td><td>—</td><td>server-generated</td><td>Client-chosen unique id. If supplied and already used, the request fails (<code>DuplicateTokenException</code> / <code>ArgumentException</code> &rarr; <code>400</code>).</td></tr>
+<tr><td><code>searchText</code></td><td><span class="type">string</span></td><td>required, non-blank</td><td>—</td><td>The query. Must not be null, empty, or whitespace-only (otherwise <code>400</code>).</td></tr>
+<tr><td><code>searchTimeout</code></td><td><span class="type">int32?</span></td><td>&ge; 5</td><td><strong>15000</strong></td><td>Idle timeout that ends the search, measured from the <em>last</em> received response. Passed verbatim to Soulseek.NET, whose unit is <strong>milliseconds</strong> (default 15000&nbsp;ms = 15&nbsp;s). See the unit caveat below.</td></tr>
+<tr><td><code>responseLimit</code></td><td><span class="type">int32?</span></td><td>0 &hellip; int32 max</td><td><strong>250</strong></td><td>Maximum number of accepted responses before the search auto-completes with <code>ResponseLimitReached</code>.</td></tr>
+<tr><td><code>fileLimit</code></td><td><span class="type">int32?</span></td><td>0 &hellip; int32 max</td><td><strong>25000</strong></td><td>Maximum cumulative number of accepted files before the search auto-completes with <code>FileLimitReached</code>.</td></tr>
+<tr><td><code>filterResponses</code></td><td><span class="type">bool?</span></td><td>—</td><td><strong>true</strong></td><td>When true, the acceptance filters below (<code>minimumResponseFileCount</code>, <code>maximumPeerQueueLength</code>, <code>minimumPeerUploadSpeed</code>) are enforced. When false, every response is accepted.</td></tr>
+<tr><td><code>minimumResponseFileCount</code></td><td><span class="type">int32?</span></td><td>0 &hellip; int32 max</td><td><strong>1</strong></td><td>A response must contain at least this many files (counting both files and locked files) to be accepted.</td></tr>
+<tr><td><code>maximumPeerQueueLength</code></td><td><span class="type">int32?</span></td><td>0 &hellip; int32 max</td><td><strong>int32 max</strong></td><td>Reject responses from peers whose upload queue is longer than this. (slskd's DTO doc-comment says "1000000"; the value actually applied when the field is omitted is <code>int.MaxValue</code> from <code>SearchOptions</code>.)</td></tr>
+<tr><td><code>minimumPeerUploadSpeed</code></td><td><span class="type">int32?</span></td><td>0 &hellip; int32 max</td><td><strong>0</strong></td><td>Reject responses from peers whose average upload speed is below this value (bytes/sec).</td></tr>
+</tbody>
+</table>
+</div>
+<div class="danger callout"><span class="label">Documented vs. effective defaults</span><p>The slskd <code>SearchRequest</code> doc-comments state defaults of <code>fileLimit = 10000</code>, <code>responseLimit = 100</code>, <code>maximumPeerQueueLength = 1000000</code>, and <code>searchTimeout = 15</code> "in seconds". These are <strong>inaccurate</strong> for the code path: omitted fields are filled from <code>new Soulseek.SearchOptions()</code>, whose constructor defaults are <code>searchTimeout = 15000</code>, <code>responseLimit = 250</code>, <code>fileLimit = 25000</code>, <code>maximumPeerQueueLength = int.MaxValue</code>, <code>minimumPeerUploadSpeed = 0</code>, <code>minimumResponseFileCount = 1</code>, <code>filterResponses = true</code>. The "Effective default" column above reflects the actual Soulseek.NET values. The <code>searchTimeout</code> unit is also a known ambiguity: the slskd comment says seconds but the value is forwarded unchanged to Soulseek.NET, which treats it as milliseconds — pass <code>15000</code> (not <code>15</code>) for a 15-second timeout.</p></div>
+<p>Options exposed by Soulseek.NET but <strong>not</strong> mapped by slskd's DTO: <code>removeSingleCharacterSearchTerms</code> (default true), and the delegate hooks <code>responseFilter</code>/<code>fileFilter</code>/<code>stateChanged</code>/<code>responseReceived</code> (slskd binds the latter two internally for persistence and SignalR broadcasting; the filter delegates are available to in-process callers via <code>ToSearchOptions(...)</code> and the <code>WithFilters</code> extension, but cannot be set over REST).</p>
+<p class="src-ref">Source: src/slskd/Search/API/DTO/SearchRequest.cs; <code>Soulseek.SearchOptions</code> (Soulseek.NET <code>src/Options/SearchOptions.cs</code>); src/slskd/Search/Extensions.cs</p>
+
+<h2 id="rest">REST endpoints</h2>
+<p>All search endpoints are under <code>/api/v0/searches</code> and require the <span class="badge role any">Any</span> authorization policy (any authenticated principal). See <a href="authentication.html">Authentication &amp; Security</a> for how to obtain a token. When slskd is running as a <strong>Relay agent</strong>, every endpoint returns <code>403 Forbidden</code> — searches are a controller-mode concern.</p>
+
+<h3 id="rest-create">Create a search</h3>
+<div class="endpoint"><span class="badge post">POST</span><span class="path">/api/v0/searches</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Request body (only <code>searchText</code> is required; the slskd web client sends only <code>{ id, searchText }</code>):</p>
+<pre><code>{
+  "id": "8f2b9e4a-7c1d-4e2a-9f0b-1a2b3c4d5e6f",
+  "searchText": "aphex twin selected ambient works",
+  "searchTimeout": 15000,
+  "responseLimit": 250,
+  "fileLimit": 25000,
+  "filterResponses": true,
+  "minimumResponseFileCount": 1,
+  "maximumPeerQueueLength": 1000000,
+  "minimumPeerUploadSpeed": 0
+}</code></pre>
+<p>Successful response — <code>200 OK</code> with the newly created <a href="#response-shape">Search record</a> (responses not yet populated):</p>
+<pre><code>{
+  "id": "8f2b9e4a-7c1d-4e2a-9f0b-1a2b3c4d5e6f",
+  "searchText": "aphex twin selected ambient works",
+  "token": 1733412096,
+  "state": "InProgress",
+  "startedAt": "2026-06-16T12:00:00.000Z",
+  "endedAt": null,
+  "fileCount": 0,
+  "lockedFileCount": 0,
+  "responseCount": 0,
+  "isComplete": false,
+  "responses": []
+}</code></pre>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Status</th><th>When</th></tr></thead>
+<tbody>
+<tr><td><code>200 OK</code></td><td>Search initiated; body is the new record.</td></tr>
+<tr><td><code>400 Bad Request</code></td><td>Validation failed (blank <code>searchText</code>, out-of-range option) or duplicate <code>id</code>/token (<code>ArgumentException</code> / <code>DuplicateTokenException</code>). Body is a human-readable message.</td></tr>
+<tr><td><code>409 Conflict</code></td><td><code>InvalidOperationException</code> — e.g. the Soulseek client is not connected/logged in.</td></tr>
+<tr><td><code>429 Too Many Requests</code></td><td>Another search is already being initiated (single-permit limiter). Retry after the in-flight create completes.</td></tr>
+<tr><td><code>403 Forbidden</code></td><td>Instance is running as a Relay agent.</td></tr>
+<tr><td><code>500</code></td><td>Search terminated abnormally during initiation.</td></tr>
+</tbody>
+</table>
+</div>
+
+<h3 id="rest-list">List searches</h3>
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/searches</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Returns an array of all active and completed search records, <strong>with responses always omitted</strong> (only counts and metadata). Use this for an index/history view.</p>
+<pre><code>[
+  {
+    "id": "8f2b9e4a-7c1d-4e2a-9f0b-1a2b3c4d5e6f",
+    "searchText": "aphex twin selected ambient works",
+    "token": 1733412096,
+    "state": "Completed, TimedOut",
+    "startedAt": "2026-06-16T12:00:00.000Z",
+    "endedAt": "2026-06-16T12:00:21.412Z",
+    "fileCount": 873,
+    "lockedFileCount": 41,
+    "responseCount": 64,
+    "isComplete": true
+  }
+]</code></pre>
+
+<h3 id="rest-get">Get a search</h3>
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/searches/{id}?includeResponses={bool}</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Parameter</th><th>In</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>id</code></td><td>route</td><td><span class="type">guid</span></td><td>—</td><td>The search id.</td></tr>
+<tr><td><code>includeResponses</code></td><td>query</td><td><span class="type">bool</span></td><td><code>false</code></td><td>When <code>true</code>, the <code>responses</code> array (with <code>files</code>/<code>lockedFiles</code>) is included; when <code>false</code>, it is empty.</td></tr>
+</tbody>
+</table>
+</div>
+<p>Returns the single <a href="#response-shape">Search record</a>, or <code>404 Not Found</code> if no search has that id. With <code>includeResponses=true</code> the full <a href="#response-shape">response/file tree</a> is materialized from the persisted JSON.</p>
+
+<h3 id="rest-responses">Get just the responses</h3>
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/searches/{id}/responses</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Returns only the <code>responses</code> array (always includes responses; equivalent to the <code>responses</code> property of <code>GET /searches/{id}?includeResponses=true</code>). <code>404</code> if the id is unknown.</p>
+
+<h3 id="rest-stop">Stop an in-progress search</h3>
+<div class="endpoint"><span class="badge put">PUT</span><span class="path">/api/v0/searches/{id}</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Requests cancellation of a running search. Returns <code>200 OK</code> if the search exists; <code>404</code> if the id is unknown. The search transitions to <code>Completed, Cancelled</code> if it was actually in progress (see the <a href="#states">cancellation caveat</a>). The route is documented as also producing <code>304 Not Modified</code> when the search was not in progress, but the current implementation returns <code>200 OK</code> unconditionally once the search is found.</p>
+
+<h3 id="rest-delete">Delete a search</h3>
+<div class="endpoint"><span class="badge delete">DELETE</span><span class="path">/api/v0/searches/{id}</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Removes the search record (and its stored responses) from the database and broadcasts <code>DELETE</code> over the hub. Returns <code>204 No Content</code> on success, or <code>404</code> if the id is unknown. Deleting does not stop a still-running search's network activity — stop it first if it is in progress.</p>
+<p class="src-ref">Source: src/slskd/Search/API/Controllers/SearchesController.cs; client wrappers in src/web/src/lib/searches.js</p>
+
+<h2 id="realtime">Real-time streaming (SearchHub)</h2>
+<p>To observe searches without polling, connect to the SignalR hub at <code>/hub/search</code> (negotiated under the SignalR base path; see <a href="realtime-api.html">Real-Time API &amp; Events</a> for connection and auth details). The hub requires the <span class="badge role any">Any</span> policy. On connect, the server invokes the client method <code>LIST</code> with the current set of searches (responses omitted) as a one-time snapshot; thereafter the server pushes per-event messages.</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Client method <span class="badge ws">SignalR</span></th><th>Constant</th><th>Payload</th><th>Fired when</th></tr></thead>
+<tbody>
+<tr><td><code>LIST</code></td><td><code>SearchHubMethods.List</code></td><td><code>Search[]</code> (responses omitted)</td><td>Once, on connection — current snapshot of all searches.</td></tr>
+<tr><td><code>CREATE</code></td><td><code>SearchHubMethods.Create</code></td><td><code>Search</code> (responses null)</td><td>A new search has been created (right after the record is persisted).</td></tr>
+<tr><td><code>UPDATE</code></td><td><code>SearchHubMethods.Update</code></td><td><code>Search</code> (responses null)</td><td>A search's state or counts changed — sent on every state transition and on rate-limited (~every 250&nbsp;ms) count updates while responses arrive, and on finalization.</td></tr>
+<tr><td><code>RESPONSE</code></td><td><code>SearchHubMethods.Response</code></td><td><code>{ "searchId": guid, "response": SearchResponse }</code></td><td>An individual accepted response arrived. The <code>response</code> object is the raw Soulseek.NET <code>SearchResponse</code> (camelCased), letting clients render results incrementally.</td></tr>
+<tr><td><code>DELETE</code></td><td><code>SearchHubMethods.Delete</code></td><td><code>Search</code> (responses null)</td><td>A search was deleted (manually or by retention pruning).</td></tr>
+</tbody>
+</table>
+</div>
+<div class="note callout"><span class="label">Streaming vs. fetching</span><p>The hub never streams the accumulated <code>responses</code> array on <code>UPDATE</code>/<code>CREATE</code>/<code>DELETE</code> — those are deliberately nulled to keep socket payloads small. To get full result content, a client either consumes individual <code>RESPONSE</code> events as they arrive, or (after seeing <code>UPDATE</code> with <code>isComplete: true</code>) fetches <code>GET /searches/{id}?includeResponses=true</code>. The <code>RESPONSE</code> event payload uses the Soulseek.NET <code>SearchResponse</code> shape (same fields as <a href="#response-shape">below</a>, minus slskd's added <code>code</code>/<code>isLocked</code> on files).</p></div>
+<p class="src-ref">Source: src/slskd/Search/API/Hubs/SearchHub.cs (<code>SearchHubMethods</code>, <code>SearchHubExtensions</code>); broadcasts in src/slskd/Search/SearchService.cs</p>
+
+<h2 id="response-shape">Response &amp; file shape</h2>
+<p>A completed search's <code>responses</code> array consists of <strong>Response</strong> objects — one per replying peer — each carrying that peer's matching <strong>File</strong> entries split into available <code>files</code> and <code>lockedFiles</code> (files the peer restricts, e.g. to privileged users). These are slskd's projection of the Soulseek.NET <code>SearchResponse</code> / <code>File</code>; the canonical field references live on <a href="data-model.html#response">Data Model &amp; Types</a>.</p>
+
+<h3 id="response-fields">Response object</h3>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>username</code></td><td><span class="type">string</span></td><td>The peer that returned this response.</td></tr>
+<tr><td><code>token</code></td><td><span class="type">int32</span></td><td>The search token echoed by the peer (matches the search's <code>token</code>).</td></tr>
+<tr><td><code>fileCount</code></td><td><span class="type">int32</span></td><td>Number of unlocked files in this response.</td></tr>
+<tr><td><code>files</code></td><td><span class="type">File[]</span></td><td>Matching unlocked files (see below).</td></tr>
+<tr><td><code>lockedFileCount</code></td><td><span class="type">int32</span></td><td>Number of locked files in this response.</td></tr>
+<tr><td><code>lockedFiles</code></td><td><span class="type">File[]</span></td><td>Matching locked/restricted files.</td></tr>
+<tr><td><code>hasFreeUploadSlot</code></td><td><span class="type">bool</span></td><td>Whether the peer currently has a free upload slot.</td></tr>
+<tr><td><code>uploadSpeed</code></td><td><span class="type">int32</span></td><td>The peer's reported average upload speed (bytes/sec).</td></tr>
+<tr><td><code>queueLength</code></td><td><span class="type">int64</span></td><td>The peer's current upload queue length.</td></tr>
+</tbody>
+</table>
+</div>
+
+<h3 id="file-fields">File object</h3>
+<p>Audio metadata fields are <strong>nullable</strong> — they are only present when the peer included file attributes. slskd adds two fields not present on the wire <code>File</code>: <code>code</code> (the directory/file code) and <code>isLocked</code> (set by slskd context, not deserialized from the peer). The bit-rate/length/etc. fields come from the peer's <a href="data-model.html#file">file attributes</a>.</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>filename</code></td><td><span class="type">string</span></td><td>Full path of the file on the peer (back-slash separated, Windows-style).</td></tr>
+<tr><td><code>size</code></td><td><span class="type">int64</span></td><td>File size in bytes.</td></tr>
+<tr><td><code>extension</code></td><td><span class="type">string</span></td><td>File extension (may be empty).</td></tr>
+<tr><td><code>code</code></td><td><span class="type">int32</span></td><td>The file's directory-listing code (typically 1). slskd-specific.</td></tr>
+<tr><td><code>bitRate</code></td><td><span class="type">int32?</span></td><td>Audio bit rate in kbps, if reported.</td></tr>
+<tr><td><code>length</code></td><td><span class="type">int32?</span></td><td>Duration in seconds, if reported.</td></tr>
+<tr><td><code>bitDepth</code></td><td><span class="type">int32?</span></td><td>Bit depth (e.g. 16, 24), if reported.</td></tr>
+<tr><td><code>sampleRate</code></td><td><span class="type">int32?</span></td><td>Sample rate in Hz, if reported.</td></tr>
+<tr><td><code>isVariableBitRate</code></td><td><span class="type">bool?</span></td><td>True if VBR, false if CBR, null if unknown.</td></tr>
+<tr><td><code>isLocked</code></td><td><span class="type">bool</span></td><td>Whether this entry is a locked file. slskd-specific (not on the wire).</td></tr>
+</tbody>
+</table>
+</div>
+<p>A concrete <code>responses</code> fragment (as returned by <code>GET /searches/{id}?includeResponses=true</code> or <code>GET /searches/{id}/responses</code>):</p>
+<pre><code>[
+  {
+    "username": "some_peer",
+    "token": 1733412096,
+    "fileCount": 2,
+    "files": [
+      {
+        "filename": "@@abcde\\Music\\Aphex Twin\\Selected Ambient Works 85-92\\01 Xtal.flac",
+        "size": 31457280,
+        "extension": "flac",
+        "code": 1,
+        "bitRate": null,
+        "length": 293,
+        "bitDepth": 16,
+        "sampleRate": 44100,
+        "isVariableBitRate": null,
+        "isLocked": false
+      },
+      {
+        "filename": "@@abcde\\Music\\Aphex Twin\\Selected Ambient Works 85-92\\02 Tha.mp3",
+        "size": 9123840,
+        "extension": "mp3",
+        "code": 1,
+        "bitRate": 320,
+        "length": 228,
+        "bitDepth": null,
+        "sampleRate": 44100,
+        "isVariableBitRate": false,
+        "isLocked": false
+      }
+    ],
+    "lockedFileCount": 1,
+    "lockedFiles": [
+      {
+        "filename": "@@abcde\\Music\\Aphex Twin\\rare\\unreleased.flac",
+        "size": 41943040,
+        "extension": "flac",
+        "code": 1,
+        "bitDepth": 24,
+        "sampleRate": 96000,
+        "length": 410,
+        "isLocked": true
+      }
+    ],
+    "hasFreeUploadSlot": true,
+    "uploadSpeed": 524288,
+    "queueLength": 0
+  }
+]</code></pre>
+<div class="tip callout"><span class="label">Tip</span><p>The <code>filename</code> path uses back-slashes and an opaque share-root prefix as the peer exposes it. To download a file, pass this exact <code>filename</code> and the peer's <code>username</code> to the transfers API — see <a href="transfers.html">Transfers &amp; Queueing</a>.</p></div>
+<p class="src-ref">Source: src/slskd/Search/Types/Response.cs, src/slskd/Search/Types/File.cs; cross-reference <a href="data-model.html#response">data-model.html#response</a> / <a href="data-model.html#file">#file</a></p>
+
+<h2 id="filter-grammar">Client-side result filter grammar</h2>
+<p>Independent of the server-side acceptance options, the slskd <strong>web UI</strong> applies a local filter to the responses it has already received. The filter is expressed as a free-text string parsed by <code>parseFiltersFromString</code> and applied per-file by <code>filterResponse</code> (in <code>src/web/src/lib/searches.js</code>). Any client implementing a similar result-narrowing UX can reuse this grammar; it is purely client-side and is <strong>not</strong> sent to slskd or the network.</p>
+<p>The string is tokenized on spaces. Tokens fall into three classes: <code>key:value</code> numeric thresholds, bare boolean flags, and plain include / <code>-</code>exclude terms.</p>
+
+<h3 id="filter-tokens">Filter tokens</h3>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Token</th><th>Aliases</th><th>Applies to (File field)</th><th>Effect</th></tr></thead>
+<tbody>
+<tr><td><code>minbr:N</code></td><td><code>minbitrate:N</code></td><td><code>bitRate</code></td><td>Drop files with <code>bitRate &lt; N</code>.</td></tr>
+<tr><td><code>minbd:N</code></td><td><code>minbitdepth:N</code></td><td><code>bitDepth</code></td><td>Drop files with <code>bitDepth &lt; N</code>.</td></tr>
+<tr><td><code>minfs:N</code></td><td><code>minfilesize:N</code></td><td><code>size</code></td><td>Drop files with <code>size &lt; N</code> (bytes).</td></tr>
+<tr><td><code>minlen:N</code></td><td><code>minlength:N</code></td><td><code>length</code></td><td>Drop files with <code>length &lt; N</code> (seconds).</td></tr>
+<tr><td><code>minfif:N</code></td><td><code>minfilesinfolder:N</code></td><td>response <code>fileCount + lockedFileCount</code></td><td>Drop the <em>entire response</em> if it contains fewer than <code>N</code> files in total.</td></tr>
+<tr><td><code>isvbr</code></td><td>—</td><td><code>isVariableBitRate</code></td><td>Keep only files where <code>isVariableBitRate === true</code> (drops unknown/CBR).</td></tr>
+<tr><td><code>iscbr</code></td><td>—</td><td><code>isVariableBitRate</code></td><td>Keep only files where <code>isVariableBitRate === false</code> (drops unknown/VBR).</td></tr>
+<tr><td><code>islossless</code></td><td>—</td><td><code>sampleRate</code>, <code>bitDepth</code></td><td>Keep only files that have <em>both</em> a <code>sampleRate</code> and a <code>bitDepth</code> (heuristic for lossless formats like FLAC/WAV).</td></tr>
+<tr><td><code>islossy</code></td><td>—</td><td><code>sampleRate</code>, <code>bitDepth</code></td><td>Keep only files that have <em>neither</em> <code>sampleRate</code> nor <code>bitDepth</code> (heuristic for lossy formats like MP3).</td></tr>
+<tr><td><code>term</code></td><td>—</td><td><code>filename</code> (lowercased)</td><td>Include term: <strong>every</strong> plain term must be a substring of the filename (logical AND).</td></tr>
+<tr><td><code>-term</code></td><td>—</td><td><code>filename</code> (lowercased)</td><td>Exclude term: drop the file if the filename contains <strong>any</strong> excluded term.</td></tr>
+</tbody>
+</table>
+</div>
+
+<h3 id="filter-semantics">Parsing &amp; evaluation rules</h3>
+<ul>
+  <li><strong>Case-insensitive.</strong> Key matches use case-insensitive regexes; plain terms and filenames are lowercased before comparison.</li>
+  <li><strong>Numeric values</strong> are parsed with <code>parseInt(…, 10)</code> against <code>/(key):(\d+)/</code>; a missing/zero value leaves the corresponding minimum at <code>0</code> (no effect). The matched <code>\d+</code> is taken literally — <code>minfs</code> is bytes, not MB/KB.</li>
+  <li><strong>Token classification.</strong> Any token containing <code>:</code> and the four reserved flag words (<code>isvbr</code>, <code>iscbr</code>, <code>islossless</code>, <code>islossy</code>) are excluded from the include/exclude term lists. Remaining tokens that start with <code>-</code> become exclusions (leading <code>-</code> stripped); all others become include terms.</li>
+  <li><strong>minfif is response-level.</strong> If a response's total file count (<code>fileCount + lockedFileCount</code>) is below <code>minFilesInFolder</code>, the whole response's <code>files</code> are emptied before per-file filtering.</li>
+  <li><strong>Per-file predicate (short-circuits to drop):</strong> a file is removed if any of: <code>isCBR</code> and the file is VBR or unknown; <code>isVBR</code> and the file is CBR or unknown; <code>isLossless</code> and it lacks sampleRate or bitDepth; <code>isLossy</code> and it has sampleRate or bitDepth; <code>bitRate &lt; minBitRate</code>; <code>bitDepth &lt; minBitDepth</code>; <code>size &lt; minFileSize</code>; <code>length &lt; minLength</code>; not all include terms are substrings of the filename; or any exclude term is a substring of the filename.</li>
+  <li>Both <code>files</code> and <code>lockedFiles</code> are filtered independently, and the response's <code>fileCount</code>/<code>lockedFileCount</code> are recomputed from the filtered arrays.</li>
+</ul>
+<div class="note callout"><span class="label">Comparison caveat</span><p>The numeric file fields are nullable. In the JS predicate a <code>null</code> compared with <code>&lt;</code> a positive minimum (e.g. <code>null &lt; 320</code>) evaluates to <code>false</code>, so a file with an unreported <code>bitRate</code> is <strong>not</strong> dropped by <code>minbr</code> — only files that report a value below the threshold are removed. This is observed behaviour of the reference implementation, not a documented guarantee.</p></div>
+<p>Example combining server exclusions and client filters in one box:</p>
+<pre><code>aphex twin minbr:320 islossless minfif:5 -live -remaster</code></pre>
+<p class="src-ref">Source: src/web/src/lib/searches.js (<code>parseFiltersFromString</code>, <code>filterResponse</code>)</p>
+
+<h2 id="server-filter">Server-side response filtering</h2>
+<p>Separately from per-search acceptance options and the UI filter, slskd can drop <em>incoming</em> search requests from other peers (i.e. requests slskd would otherwise answer from its own shares) using configured regular expressions. This is a privacy/abuse control, not a result filter for your own searches.</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Option</th><th>CLI / Env</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>filters.search.request</code></td><td><code>--search-request-filter</code> / <code>SEARCH_REQUEST_FILTER</code></td><td><span class="type">string[]</span></td><td>empty</td><td>Regular expressions; an incoming search request matching any of them is ignored (slskd will not respond with shares).</td></tr>
+</tbody>
+</table>
+</div>
+<p>Each entry is validated as a valid .NET regular expression at startup; an invalid pattern fails configuration validation. A related retention setting, <code>retention.search</code> (<span class="type">int?</span>, minimum 5 minutes), controls how long completed searches are kept before being pruned and broadcast as <code>DELETE</code>.</p>
+<p class="src-ref">Source: src/slskd/Core/Options.cs (<code>FiltersOptions.SearchOptions</code>, <code>RetentionOptions.Search</code>); src/slskd/Search/SearchService.cs (<code>PruneAsync</code>)</p>
+
+<h2 id="notes">Operational notes</h2>
+<ul>
+  <li><strong>One search at a time (initiation).</strong> The single-permit limiter only guards the <em>creation</em> path; many searches can be in progress concurrently — the gate prevents two POSTs from racing during setup. A POST that collides returns <code>429</code>.</li>
+  <li><strong>Persistence.</strong> Searches are stored in a SQLite database (<code>SearchDbContext</code>). Responses are serialized to a single JSON column (<code>responsesJson</code>, not returned directly — surfaced as the <code>responses</code> array), so list/get-without-responses queries project the record without materializing that column for efficiency.</li>
+  <li><strong>Counts vs. responses.</strong> <code>responseCount</code>, <code>fileCount</code> and <code>lockedFileCount</code> on the Search record are maintained live (rate-limited) during the search and reflect <em>accepted</em> results after server-side acceptance options. The client-side filter grammar can reduce the displayed counts further without changing these stored totals.</li>
+  <li><strong>Tokens are uint32 on the wire.</strong> slskd's record exposes <code>token</code> as a signed <span class="type">int32</span>; on the Soulseek wire it is an unsigned 32-bit integer. Treat it as an opaque correlation id.</li>
+  <li><strong>Relay agents cannot search.</strong> Every endpoint and the network search itself are disabled when running in Relay-agent mode; see <a href="relay.html">Relay Protocol</a>.</li>
+</ul>
+<p class="src-ref">Source: src/slskd/Search/SearchDbContext.cs, src/slskd/Search/SearchService.cs, src/slskd/Search/Types/Search.cs</p>
+
+    <div class="page-nav-links">
+      <a class="prev" href="data-model.html"><span class="dir">&larr; Previous</span><br><span class="ttl">Data Model &amp; Types</span></a>
+      <a class="next" href="transfers.html"><span class="dir">Next &rarr;</span><br><span class="ttl">Transfers &amp; Queueing</span></a>
+    </div>
+    <footer class="page-footer">
+      <span>slskd / Soulseek Protocol &amp; Model Specification &middot; derived from source (slskd, Soulseek.NET 10.0.1) &middot; AGPL-3.0</span>
+      <span>Not an official Soulseek document.</span>
+    </footer>
+  </main>
+</div>
+</div>
+<script src="script.js"></script>
+</body>
+</html>

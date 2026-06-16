@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Real-Time API &amp; Events · slskd Protocol &amp; Model Specification</title>
+<meta name="description" content="slskd / Soulseek network, protocol and data-model specification — Real-Time API &amp; Events. A language-agnostic reference for building clients, apps and services that interoperate with the Soulseek platform.">
+<link rel="stylesheet" href="style.css">
+<script>(function(){try{var t=localStorage.getItem('slskd-spec-theme');if(t){document.documentElement.setAttribute('data-theme',t);}else if(window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches){document.documentElement.setAttribute('data-theme','dark');}}catch(e){}})();</script>
+</head>
+<body>
+<div class="scrim"></div>
+<div class="layout">
+<aside class="sidebar">
+  <div class="brand">
+    <div class="logo">sd</div>
+    <div class="brand-text">
+      <span class="brand-title">slskd Spec</span>
+      <span class="brand-sub">Soulseek protocol &amp; model</span>
+    </div>
+  </div>
+  <div class="nav-filter-wrap"><input class="nav-filter" type="text" placeholder="Filter pages…" aria-label="Filter pages"></div>
+  <nav>
+  <div class="nav-group-label">Introduction</div>
+  <ul>
+    <li><a href="index.html"><span class="nav-num">1</span><span>Overview</span></a></li>
+    <li><a href="architecture.html"><span class="nav-num">2</span><span>Architecture &amp; Concepts</span></a></li>
+  </ul>
+  <div class="nav-group-label">The Soulseek Network</div>
+  <ul>
+    <li><a href="soulseek-protocol.html"><span class="nav-num">3</span><span>Soulseek Wire Protocol</span></a></li>
+    <li><a href="data-model.html"><span class="nav-num">4</span><span>Data Model &amp; Types</span></a></li>
+  </ul>
+  <div class="nav-group-label">Domains</div>
+  <ul>
+    <li><a href="search.html"><span class="nav-num">5</span><span>Search</span></a></li>
+    <li><a href="transfers.html"><span class="nav-num">6</span><span>Transfers &amp; Queueing</span></a></li>
+    <li><a href="users-rooms.html"><span class="nav-num">7</span><span>Users, Rooms &amp; Chat</span></a></li>
+    <li><a href="shares.html"><span class="nav-num">8</span><span>Shares &amp; Browsing</span></a></li>
+  </ul>
+  <div class="nav-group-label">Integration</div>
+  <ul>
+    <li><a href="authentication.html"><span class="nav-num">9</span><span>Authentication &amp; Security</span></a></li>
+    <li><a href="rest-api.html"><span class="nav-num">10</span><span>REST API Reference</span></a></li>
+    <li class="active"><a href="realtime-api.html" aria-current="page"><span class="nav-num">11</span><span>Real-Time API &amp; Events</span></a></li>
+    <li><a href="relay.html"><span class="nav-num">12</span><span>Relay Protocol</span></a></li>
+  </ul>
+</nav>
+</aside>
+<div class="main-col">
+  <header class="topbar">
+    <button class="menu-btn" aria-label="Toggle navigation">&#9776;</button>
+    <span class="crumb">Integration / <b>Real-Time API &amp; Events</b></span>
+    <span class="spacer"></span>
+    <a class="tb-link" href="index.html#sitemap">Contents</a>
+    <a class="tb-link" href="https://github.com/slskd/slskd" target="_blank" rel="noopener">GitHub</a>
+    <button class="theme-toggle" aria-label="Toggle dark mode" title="Toggle theme">◐</button>
+  </header>
+  <main class="content">
+
+<h1>Real-Time API &amp; Events</h1>
+<p class="page-lede">slskd exposes live application state through four Microsoft SignalR hubs (<code>/hub/application</code>, <code>/hub/logs</code>, <code>/hub/search</code>, <code>/hub/relay</code>) and a separate, durable <em>events</em> log persisted to the database and surfaced under <code>/api/v0/events</code>. SignalR is the push channel for interactive UIs; the events log is the integration channel that drives outbound webhooks and shell scripts. This page enumerates every server&#8594;client method, client&#8594;server invocation, and payload shape for each hub, documents the event catalog and the <code>EventRecord</code> store, and gives a language-agnostic recipe for connecting from a non-.NET client.</p>
+
+<nav class="toc">
+  <div class="toc-title">On this page</div>
+  <ul>
+    <li><a href="#two-channels">Two channels: SignalR vs. Events</a></li>
+    <li><a href="#signalr-basics">SignalR basics for slskd</a></li>
+    <li><a href="#hub-app">ApplicationHub — <code>/hub/application</code></a></li>
+    <li><a href="#hub-logs">LogsHub — <code>/hub/logs</code></a></li>
+    <li><a href="#hub-search">SearchHub — <code>/hub/search</code></a></li>
+    <li><a href="#hub-relay">RelayHub — <code>/hub/relay</code></a></li>
+    <li><a href="#events-system">The Events system</a></li>
+    <li><a href="#event-catalog">Event type catalog</a></li>
+    <li><a href="#events-api">Events REST API</a></li>
+    <li><a href="#integrations">Webhooks &amp; Scripts</a></li>
+    <li><a href="#recipe">Connection recipe (language-agnostic)</a></li>
+  </ul>
+</nav>
+
+<h2 id="two-channels">Two channels: SignalR vs. Events</h2>
+<p>slskd offers two distinct real-time mechanisms. They overlap in subject matter but differ fundamentally in delivery guarantees and intended consumers.</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Aspect</th><th>SignalR hubs</th><th>Events log</th></tr></thead>
+<tbody>
+<tr><td>Transport</td><td>Persistent connection (WebSocket / SSE / long-poll) via SignalR hub protocol</td><td>Plain REST polling, plus optional push to webhooks/scripts</td></tr>
+<tr><td>Durability</td><td>Ephemeral — delivered only to clients connected at the moment</td><td>Durable — persisted to a SQLite table (<code>EventRecord</code>), survives restarts</td></tr>
+<tr><td>Delivery</td><td>Best-effort broadcast to all connected clients</td><td>At-least-once dispatch to integrations; replay via paging</td></tr>
+<tr><td>Granularity</td><td>Fine: every state mutation, every log line, every search response</td><td>Coarse: a small set of "something happened" milestones (file complete, message received, …)</td></tr>
+<tr><td>Use it for</td><td>Live UI: progress bars, log tails, search result streaming, connection status</td><td>Integrations: notifications, post-processing, automation, audit trail</td></tr>
+<tr><td>Auth</td><td>JWT (query string) or API key (header); policy <span class="badge role any">Any</span> for app/logs/search</td><td>JWT or API key; policy <span class="badge role any">Any</span></td></tr>
+</tbody>
+</table>
+</div>
+<div class="note callout"><span class="label">Rule of thumb</span><p>If a missed message would corrupt your view, you want the durable <a href="#events-system">events log</a> (poll on reconnect to backfill). If you are rendering a live screen and only the latest value matters, use a <a href="#signalr-basics">SignalR hub</a>. The two are independent subsystems; a build/post-process pipeline should never depend on SignalR delivery.</p></div>
+
+<h2 id="signalr-basics">SignalR basics for slskd</h2>
+<p>The four hubs are mapped in <code>Program.cs</code> after the routing/auth middleware:</p>
+<pre><code>endpoints.MapHub&lt;ApplicationHub&gt;("/hub/application");
+endpoints.MapHub&lt;LogsHub&gt;("/hub/logs");
+endpoints.MapHub&lt;SearchHub&gt;("/hub/search");
+endpoints.MapHub&lt;RelayHub&gt;("/hub/relay");</code></pre>
+<p>These are <strong>Microsoft ASP.NET Core SignalR</strong> hubs, not raw WebSockets. A client must speak the SignalR hub protocol: a <code>POST {hub}/negotiate?negotiateVersion=1</code> handshake that returns a <code>connectionId</code> / <code>connectionToken</code> and the list of available transports, followed by a transport connection (WebSockets preferred, then Server-Sent Events, then long polling) and a per-connection JSON handshake frame terminated by the ASCII record separator <code>0x1E</code>.</p>
+
+<div class="table-wrap">
+<table>
+<thead><tr><th>Concern</th><th>Value in slskd</th><th>Source / note</th></tr></thead>
+<tbody>
+<tr><td>Hub base path</td><td><code>/hub</code> (the web client builds URLs as <code>{root}/hub/{name}</code>)</td><td>src/web/src/config.js (<code>hubBaseUrl</code>)</td></tr>
+<tr><td>Hub protocol</td><td>JSON hub protocol. The web client uses <code>new JsonHubProtocol()</code> explicitly</td><td>src/web/src/lib/hubFactory.js. MessagePack is <strong>not</strong> registered server-side, so JSON is the only protocol available.</td></tr>
+<tr><td>Server JSON protocol options</td><td>Registers <code>IPAddressConverter</code> and <code>JsonStringEnumConverter</code> on the payload serializer</td><td>src/slskd/Program.cs <code>AddSignalR().AddJsonProtocol(...)</code>. Enums serialize as <em>strings</em>, IP addresses as strings.</td></tr>
+<tr><td>Property casing</td><td>camelCase by ASP.NET Core SignalR default (the web client reads <code>state</code>, <code>search.id</code>, etc.)</td><td>e.g. a C# <code>BytesTransferred</code> arrives as <code>bytesTransferred</code>.</td></tr>
+<tr><td>Max parallel invocations / client</td><td><code>2</code></td><td>src/slskd/Program.cs <code>options.MaximumParallelInvocationsPerClient = 2</code></td></tr>
+<tr><td>Reconnect</td><td>Client responsibility. The web client uses automatic reconnect with backoff <code>[0, 100, 250, 500, 1000, 2000, 3000, 5000&#215;5]</code> ms</td><td>src/web/src/lib/hubFactory.js</td></tr>
+</tbody>
+</table>
+</div>
+
+<h3 id="signalr-auth">Authentication</h3>
+<p>All four hubs are decorated with <code>[Authorize]</code>. The application/logs/search hubs use policy <span class="badge role any">Any</span> (a valid JWT <em>or</em> API key with any role); the relay hub uses the default authenticated policy and an additional challenge/response handshake (see <a href="#hub-relay">RelayHub</a> and <a href="relay.html">Relay Protocol</a>).</p>
+<p>Because browsers cannot set an <code>Authorization</code> header on a WebSocket, slskd accepts the token via the <code>access_token</code> query-string parameter for any path beginning with <code>/hub</code>. The middleware checks the query string first; if absent, it falls back to a <code>Bearer</code> <code>Authorization</code> header (which may carry a JWT <em>or</em> an API key — an API key is internally exchanged for a short-lived JWT).</p>
+<pre><code>// JWT in the query string (browser style)
+wss://host:5030/hub/application?access_token=eyJhbGciOiJIUzI1NiIs...
+
+// or an Authorization header on the negotiate request (non-browser client)
+Authorization: Bearer &lt;jwt-or-api-key&gt;</code></pre>
+<div class="note callout"><span class="label">Note</span><p>The query-string token <em>takes precedence</em> over the <code>Authorization</code> header. SignalR sends the token on every transport request, including the long-poll/SSE fallbacks, so it must be a query parameter for those transports too. See <a href="authentication.html">Authentication &amp; Security</a> for token issuance and API-key configuration.</p></div>
+<p class="src-ref">Source: src/slskd/Program.cs (<code>OnMessageReceived</code>, <code>MapHub</code>, <code>AddSignalR</code>); src/web/src/lib/hubFactory.js; src/web/src/config.js</p>
+
+<h3 id="signalr-naming">A note on method-name casing</h3>
+<p>The server defines its server&#8594;client method names as UPPER-CASE constants (e.g. <code>STATE</code>, <code>OPTIONS</code>, <code>LOG</code>, <code>BUFFER</code>, <code>LIST</code>, <code>CREATE</code>). The SignalR JSON hub protocol matches handler names <strong>case-insensitively</strong>, so the web client registers handlers using lower-case names (<code>hub.on('state', …)</code>). When you implement a client, register your handler under the method name; case does not matter. This page lists the canonical server-side constant for each method.</p>
+
+<h2 id="hub-app">ApplicationHub — <code>/hub/application</code></h2>
+<p>The primary hub. On connect it pushes a full snapshot of application <em>state</em> and (redacted) <em>options</em>; thereafter it broadcasts the entire state object again every time any field of the state changes, and the entire options object again every time configuration is reloaded. There are no client&#8594;server invocations — it is a one-way push hub.</p>
+
+<h3 id="app-s2c">Server&#8594;client methods</h3>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Method</th><th>When</th><th>Payload</th></tr></thead>
+<tbody>
+<tr><td><code>STATE</code></td><td>On connect (to caller), then on <em>every</em> state mutation (broadcast to all)</td><td>The full <a href="#app-state-shape"><code>State</code></a> object</td></tr>
+<tr><td><code>OPTIONS</code></td><td>On connect (to caller), then whenever options are reloaded (broadcast to all)</td><td>The full <code>Options</code> object, <strong>redacted</strong> — secrets such as passwords and API keys are masked via <code>Options.Redact()</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>The state snapshot is sent unconditionally on connect; the broadcast is wired in <code>Application.cs</code> via <code>State.OnChange(...)&#8594;BroadcastStateAsync</code> and <code>OptionsMonitor.OnChange(...)&#8594;BroadcastOptionsAsync</code>. Because the entire object is re-sent on every change, clients should treat each <code>STATE</code> message as a complete replacement, not a delta.</p>
+<p class="src-ref">Source: src/slskd/Core/API/Hubs/ApplicationHub.cs; src/slskd/Application.cs (lines ~1614, ~1904); src/web/src/components/App.jsx</p>
+
+<h3 id="app-state-shape">The <code>State</code> object</h3>
+<p>Top-level fields of the broadcast <code>State</code> record (camelCase on the wire). Nested DTOs are summarized; see <a href="data-model.html">Data Model &amp; Types</a> for the constituent types.</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>version</code></td><td>object</td><td>App version info: <code>full</code>, <code>current</code>, <code>latest</code> (nullable), <code>isUpdateAvailable</code> (nullable bool), <code>isCanary</code>, <code>isDevelopment</code>.</td></tr>
+<tr><td><code>pendingReconnect</code></td><td><span class="type">bool</span></td><td>A configuration change requires reconnecting to the Soulseek server.</td></tr>
+<tr><td><code>pendingRestart</code></td><td><span class="type">bool</span></td><td>A configuration change requires an application restart.</td></tr>
+<tr><td><code>server</code></td><td>object</td><td>Soulseek server connection: <code>address</code>, <code>ipEndPoint</code>, <code>state</code> (flags enum as string), and derived booleans <code>isConnected</code>, <code>isConnecting</code>, <code>isLoggedIn</code>, <code>isLoggingIn</code>, <code>isTransitioning</code>.</td></tr>
+<tr><td><code>connectionWatchdog</code></td><td>object</td><td>Reconnect watchdog: <code>isEnabled</code>, <code>isAttemptingConnection</code>, <code>isAwaitingVpn</code>, <code>nextAttemptAt</code> (nullable).</td></tr>
+<tr><td><code>vpn</code></td><td>object</td><td>VPN integration state: <code>isReady</code>, <code>isConnected</code>, <code>publicIPAddress</code>, <code>location</code>, <code>forwardedPort</code> (nullable).</td></tr>
+<tr><td><code>relay</code></td><td>object</td><td>Relay state: <code>mode</code> (enum string), <code>controller</code> (<code>address</code>, <code>state</code>), <code>agents</code> (collection).</td></tr>
+<tr><td><code>health</code></td><td>object</td><td>Incoming search health: <code>search.incoming.latency</code>, <code>queueDepth</code>, <code>dropRate</code>.</td></tr>
+<tr><td><code>user</code></td><td>object</td><td>Logged-in user: <code>username</code>, <code>privileges</code> (<code>isPrivileged</code>, <code>privilegesRemaining</code>), <code>statistics</code> (<code>averageSpeed</code>, <code>directoryCount</code>, <code>fileCount</code>, <code>uploadCount</code>).</td></tr>
+<tr><td><code>distributedNetwork</code></td><td>object</td><td>Distributed (parent/child) network: <code>branchLevel</code>, <code>branchRoot</code>, <code>canAcceptChildren</code>, <code>childLimit</code>, <code>children</code>, <code>hasParent</code>, <code>isBranchRoot</code>, <code>parent</code>.</td></tr>
+<tr><td><code>shares</code></td><td>object</td><td>Share scan state: <code>scanPending</code>, <code>scanning</code>, <code>ready</code>, <code>faulted</code>, <code>cancelled</code>, <code>scanProgress</code>, <code>hosts</code>, <code>directories</code>, <code>files</code>. See <a href="shares.html">Shares</a>.</td></tr>
+<tr><td><code>rooms</code></td><td><span class="type">string[]</span></td><td>Names of joined chat rooms.</td></tr>
+<tr><td><code>users</code></td><td><span class="type">User[]</span></td><td>Watched/known users. See <a href="users-rooms.html">Users &amp; Rooms</a>.</td></tr>
+</tbody>
+</table>
+</div>
+<p class="src-ref">Source: src/slskd/Core/State.cs</p>
+
+<h3 id="app-snippet">Example: handling <code>STATE</code></h3>
+<pre><code>// JavaScript (web client), abbreviated
+const appHub = createApplicationHubConnection(); // url = {root}/hub/application
+appHub.on('state',   (state)   =&gt; setApplicationState(state));   // full snapshot
+appHub.on('options', (options) =&gt; setApplicationOptions(options)); // redacted
+await appHub.start();</code></pre>
+<p>A representative <code>STATE</code> payload (truncated):</p>
+<pre><code>{
+  "version": { "current": "0.22.0", "isUpdateAvailable": false, "isCanary": false },
+  "pendingReconnect": false,
+  "pendingRestart": false,
+  "server": {
+    "address": "vps.slsknet.org",
+    "state": "Connected, LoggedIn",
+    "isConnected": true,
+    "isLoggedIn": true,
+    "isTransitioning": false
+  },
+  "user": {
+    "username": "myname",
+    "privileges": { "isPrivileged": false, "privilegesRemaining": 0 }
+  },
+  "shares": { "ready": true, "scanning": false, "directories": 120, "files": 4210 },
+  "rooms": ["nicotine"],
+  "users": []
+}</code></pre>
+
+<h2 id="hub-logs">LogsHub — <code>/hub/logs</code></h2>
+<p>Streams Serilog log records as they are emitted. On connect, the hub pushes the in-memory ring buffer of recent records so a freshly connected client has immediate context; thereafter each new record is pushed individually.</p>
+
+<h3 id="logs-s2c">Server&#8594;client methods</h3>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Method</th><th>When</th><th>Payload</th></tr></thead>
+<tbody>
+<tr><td><code>BUFFER</code></td><td>On connect (to caller)</td><td>Array of <a href="#logrecord-shape"><code>LogRecord</code></a> — the contents of <code>Program.LogBuffer</code> (recent history)</td></tr>
+<tr><td><code>LOG</code></td><td>On every newly emitted log event (broadcast to all)</td><td>A single <a href="#logrecord-shape"><code>LogRecord</code></a></td></tr>
+</tbody>
+</table>
+</div>
+<p>The live stream is wired in <code>Application.cs</code>: <code>Program.LogEmitted += (_, log) =&gt; LogHub.EmitLogAsync(log)</code>, which calls <code>Clients.All.SendAsync("LOG", record)</code>.</p>
+
+<h3 id="logrecord-shape">The <code>LogRecord</code> object</h3>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>timestamp</code></td><td><span class="type">DateTime</span></td><td>UTC timestamp of the log event (ISO-8601 on the wire).</td></tr>
+<tr><td><code>context</code></td><td><span class="type">string</span></td><td>Source context — typically the emitting class/category name.</td></tr>
+<tr><td><code>subContext</code></td><td><span class="type">string</span></td><td>Optional secondary context, may be <code>null</code>.</td></tr>
+<tr><td><code>level</code></td><td><span class="type">string</span></td><td>Serilog level: <code>Verbose</code>, <code>Debug</code>, <code>Information</code>, <code>Warning</code>, <code>Error</code>, <code>Fatal</code>.</td></tr>
+<tr><td><code>message</code></td><td><span class="type">string</span></td><td>Rendered log message text.</td></tr>
+</tbody>
+</table>
+</div>
+<pre><code>// LOG payload
+{
+  "timestamp": "2026-06-16T12:34:56.789Z",
+  "context": "slskd.Search.SearchService",
+  "subContext": null,
+  "level": "Information",
+  "message": "Search for 'aphex twin' completed with 42 responses"
+}</code></pre>
+<p class="src-ref">Source: src/slskd/Core/API/Hubs/LogsHub.cs; src/slskd/Common/Logging/LogRecord.cs; src/slskd/Application.cs (line ~196); src/web/src/components/System/Logs/index.jsx</p>
+
+<h2 id="hub-search">SearchHub — <code>/hub/search</code></h2>
+<p>Streams the lifecycle of searches: the current list on connect, then create/update/delete events for the search records, plus a stream of individual responses as they arrive from the network. This lets a UI render incremental results without polling <a href="rest-api.html">REST</a>.</p>
+
+<h3 id="search-s2c">Server&#8594;client methods</h3>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Method</th><th>When</th><th>Payload</th></tr></thead>
+<tbody>
+<tr><td><code>LIST</code></td><td>On connect (to caller)</td><td>Array of <a href="search.html">Search</a> records — the full current list (with responses).</td></tr>
+<tr><td><code>CREATE</code></td><td>When a new search is started (broadcast)</td><td>A single <code>Search</code> record with <code>responses</code> set to <code>null</code>.</td></tr>
+<tr><td><code>UPDATE</code></td><td>When a search's state/counters change, including completion (broadcast)</td><td>A single <code>Search</code> record with <code>responses</code> set to <code>null</code>.</td></tr>
+<tr><td><code>RESPONSE</code></td><td>When a new search response is received from a peer (broadcast)</td><td>An envelope <code>{ "searchId": &lt;guid&gt;, "response": &lt;SearchResponse&gt; }</code>.</td></tr>
+<tr><td><code>DELETE</code></td><td>When a search is deleted (broadcast)</td><td>A single <code>Search</code> record with <code>responses</code> set to <code>null</code>.</td></tr>
+</tbody>
+</table>
+</div>
+<div class="note callout"><span class="label">Note</span><p><code>CREATE</code>, <code>UPDATE</code> and <code>DELETE</code> deliberately strip the <code>responses</code> collection (sent as <code>null</code>) to keep broadcasts small — the record carries counters (<code>responseCount</code>, <code>fileCount</code>, state, etc.) but not the result rows. Individual results arrive separately via <code>RESPONSE</code> as they come in. To assemble a full result set, accumulate <code>RESPONSE</code> envelopes keyed by <code>searchId</code>, or fetch <code>GET /api/v0/searches/{id}?includeResponses=true</code> from the <a href="rest-api.html">REST API</a>. The <code>LIST</code> snapshot on connect is the exception — it includes responses.</p></div>
+<p>There is no <em>completed</em> method; completion is observed as an <code>UPDATE</code> whose <code>state</code> field reaches a terminal value (e.g. <code>Completed, TimedOut</code>). See <a href="search.html">Search</a> for the <code>Search.state</code> flags enum.</p>
+
+<h3 id="search-snippet">Example: streaming search</h3>
+<pre><code>const searchHub = createSearchHubConnection(); // {root}/hub/search
+searchHub.on('list',   (searches) =&gt; seed(searches));            // array, with responses
+searchHub.on('create', (search)   =&gt; upsert(search));            // responses === null
+searchHub.on('update', (search)   =&gt; upsert(search));            // responses === null
+searchHub.on('delete', (search)   =&gt; remove(search.id));
+searchHub.on('response', ({ searchId, response }) =&gt; append(searchId, response));
+await searchHub.start();</code></pre>
+<pre><code>// RESPONSE envelope
+{
+  "searchId": "1f3c9b7e-2a4d-4c1a-9e6b-0a1b2c3d4e5f",
+  "response": {
+    "username": "someuser",
+    "token": 123456,
+    "fileCount": 3,
+    "files": [ /* File[] */ ],
+    "hasFreeUploadSlot": true,
+    "queueLength": 0,
+    "uploadSpeed": 524288
+  }
+}</code></pre>
+<p class="src-ref">Source: src/slskd/Search/API/Hubs/SearchHub.cs; src/slskd/Search/SearchService.cs; src/web/src/components/Search/Searches.jsx</p>
+
+<h2 id="hub-relay">RelayHub — <code>/hub/relay</code></h2>
+<p>The relay hub is bidirectional and is the backbone of slskd's distributed (controller/agent) deployment mode. Unlike the other hubs, the relay hub uses a strongly-typed client interface (<code>Hub&lt;IRelayHub&gt;</code>) and a custom challenge/response authentication on top of the SignalR <code>[Authorize]</code>. It is only active when <code>relay.enabled</code> is true and the instance runs in <code>Controller</code> (or <code>Debug</code>) mode; otherwise new connections are aborted on connect. Full coverage — including the file-transfer relay workflow — is in <a href="relay.html">Relay Protocol</a>; this section lists the method signatures for completeness.</p>
+
+<h3 id="relay-s2c">Server (controller)&#8594;client (agent) methods — <code>IRelayHub</code></h3>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Method</th><th>Parameters</th><th>Purpose</th></tr></thead>
+<tbody>
+<tr><td><code>Challenge</code></td><td><code>token: string</code></td><td>Sent on connect; the agent must answer via <code>Login</code> with a response derived from the token and the shared secret.</td></tr>
+<tr><td><code>RequestFileInfo</code></td><td><code>filename: string, id: Guid</code></td><td>Ask the agent whether a file exists and its length; agent replies with <code>ReturnFileInfo</code>.</td></tr>
+<tr><td><code>RequestFileUpload</code></td><td><code>filename: string, startOffset: long, id: Guid</code></td><td>Ask the agent to stream a file (for serving an upload). Agent uploads via the relay HTTP endpoint, or reports failure via <code>NotifyFileUploadFailed</code>.</td></tr>
+<tr><td><code>NotifyFileDownloadCompleted</code></td><td><code>filename: string, id: Guid</code></td><td>Tell the agent a download it requested is complete and ready to be pulled.</td></tr>
+</tbody>
+</table>
+</div>
+
+<h3 id="relay-c2s">Client (agent)&#8594;server (controller) invocations</h3>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Method</th><th>Parameters &#8594; returns</th><th>Purpose</th></tr></thead>
+<tbody>
+<tr><td><code>Login</code></td><td><code>agent: string, challengeResponse: string</code></td><td>Authenticate the agent: validates the agent name against configured agents, the source IP against the agent's CIDR allow-list, and the challenge response. On failure throws <code>UnauthorizedAccessException</code>.</td></tr>
+<tr><td><code>BeginShareUpload</code></td><td><code>() &#8594; Guid</code></td><td>Obtain a share-upload token to begin uploading the agent's share catalog to the controller. Requires prior <code>Login</code>.</td></tr>
+<tr><td><code>ReturnFileInfo</code></td><td><code>id: Guid, exists: bool, length: long</code></td><td>Respond to a <code>RequestFileInfo</code> call.</td></tr>
+<tr><td><code>NotifyFileUploadFailed</code></td><td><code>id: Guid, exception: Exception</code></td><td>Report that the agent could not fulfil a <code>RequestFileUpload</code>.</td></tr>
+</tbody>
+</table>
+</div>
+<div class="warn callout"><span class="label">Authorization</span><p>On connect the controller aborts the connection if relay is disabled or the instance is not in <code>Controller</code>/<code>Debug</code> mode. After the SignalR <code>[Authorize]</code> check, the agent must still pass the <code>Challenge</code>&#8594;<code>Login</code> handshake; the source IP must fall within the configured per-agent CIDR range. See <a href="relay.html">Relay Protocol</a> and <a href="authentication.html">Authentication &amp; Security</a>.</p></div>
+<p class="src-ref">Source: src/slskd/Relay/API/Hubs/RelayHub.cs</p>
+
+<h2 id="events-system">The Events system</h2>
+<p>The events system is a separate, durable subsystem. An internal <code>EventBus</code> publishes strongly-typed <code>Event</code> records; subscribers include the <code>EventService</code> (which persists each event as an <code>EventRecord</code> row), the <a href="#integrations"><code>WebhookService</code> and <code>ScriptService</code></a>, and any other internal consumer. Events are surfaced to API clients only through the durable store (poll <code>GET /api/v0/events</code>) and through the push integrations — they are <strong>not</strong> broadcast over SignalR.</p>
+
+<h3 id="event-record">The <code>EventRecord</code> (stored form)</h3>
+<p>Each raised event is converted to an <code>EventRecord</code> and written to a database table indexed on <code>Timestamp</code> and <code>Type</code>.</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>id</code></td><td><span class="type">Guid</span></td><td>Primary key; equals the originating event's <code>Id</code>.</td></tr>
+<tr><td><code>timestamp</code></td><td><span class="type">DateTime</span></td><td>UTC time the event occurred; equals the event's <code>Timestamp</code>.</td></tr>
+<tr><td><code>type</code></td><td><span class="type">EventType</span></td><td>The event type, serialized as a string (e.g. <code>"DownloadFileComplete"</code>).</td></tr>
+<tr><td><code>data</code></td><td><span class="type">string</span></td><td>The event-specific payload, serialized as a JSON <em>string</em> (camelCase, nulls retained). The redundant <code>timestamp</code>, <code>type</code>, <code>id</code> and <code>data</code> keys are stripped from this inner object before storage.</td></tr>
+</tbody>
+</table>
+</div>
+<div class="warn callout"><span class="label">Important</span><p>In the stored/listed <code>EventRecord</code>, <code>data</code> is a <strong>JSON-encoded string</strong>, not a nested object. A consumer of <code>GET /api/v0/events</code> must parse <code>record.data</code> a second time to obtain the typed payload. Compare with webhook/script delivery (below), where the event is serialized as a flat JSON object with <code>timestamp</code>/<code>type</code>/<code>id</code> at the top level alongside the payload fields.</p></div>
+<p class="src-ref">Source: src/slskd/Events/Types/EventRecord.cs; src/slskd/Events/EventService.cs</p>
+
+<h2 id="event-catalog">Event type catalog</h2>
+<p>The <code>EventType</code> enum and its backing record types. <code>None</code> and <code>Any</code> are sentinels (filters/wildcards) and cannot be raised. Every concrete event also carries the base fields <code>id</code> (<span class="type">Guid</span>), <code>timestamp</code> (<span class="type">DateTime</span>, UTC), <code>type</code> (enum string) and <code>version</code> (<span class="type">int32</span>, currently <code>0</code> for all types).</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th>EventType</th><th>Enum #</th><th>Record</th><th>Payload fields (beyond base)</th></tr></thead>
+<tbody>
+<tr><td><code>None</code></td><td><span class="type">0</span></td><td>—</td><td>Sentinel; not raisable.</td></tr>
+<tr><td><code>Any</code></td><td><span class="type">1</span></td><td>—</td><td>Wildcard for webhook/script <code>on</code> filters; not raisable.</td></tr>
+<tr><td><code>DownloadFileComplete</code></td><td><span class="type">2</span></td><td><code>DownloadFileCompleteEvent</code></td><td><code>localFilename</code>, <code>remoteFilename</code>, <code>transfer</code> (full <a href="transfers.html">Transfer</a>).</td></tr>
+<tr><td><code>DownloadDirectoryComplete</code></td><td><span class="type">3</span></td><td><code>DownloadDirectoryCompleteEvent</code></td><td><code>localDirectoryName</code>, <code>remoteDirectoryName</code>, <code>username</code>.</td></tr>
+<tr><td><code>UploadFileComplete</code></td><td><span class="type">4</span></td><td><code>UploadFileCompleteEvent</code></td><td><code>localFilename</code>, <code>remoteFilename</code>, <code>transfer</code> (full <a href="transfers.html">Transfer</a>).</td></tr>
+<tr><td><code>PrivateMessageReceived</code></td><td><span class="type">6</span></td><td><code>PrivateMessageReceivedEvent</code></td><td><code>message</code> (a <a href="users-rooms.html">PrivateMessage</a>: <code>id</code>, <code>timestamp</code>, <code>username</code>, <code>message</code>, …).</td></tr>
+<tr><td><code>RoomMessageReceived</code></td><td><span class="type">7</span></td><td><code>RoomMessageReceivedEvent</code></td><td><code>message</code> (a <a href="users-rooms.html">RoomMessage</a>: <code>roomName</code>, <code>username</code>, <code>message</code>).</td></tr>
+<tr><td><code>SoulseekClientConnected</code></td><td><span class="type">50</span></td><td><code>SoulseekClientConnectedEvent</code></td><td>(none)</td></tr>
+<tr><td><code>SoulseekClientDisconnected</code></td><td><span class="type">51</span></td><td><code>SoulseekClientDisconnectedEvent</code></td><td><code>message</code>, <code>exception</code>.</td></tr>
+<tr><td><code>Noop</code></td><td><span class="type">2147483647</span></td><td><code>NoopEvent</code></td><td>(none) — <code>int.MaxValue</code>; a no-op used for testing.</td></tr>
+</tbody>
+</table>
+</div>
+<div class="note callout"><span class="label">Note</span><p>Enum value <code>5</code> (<code>UploadDirectoryComplete</code>) is reserved but commented out in source and is not emitted. The numeric values are stable identifiers; rely on the string name, not the ordinal, for forward compatibility.</p></div>
+<p class="src-ref">Source: src/slskd/Events/Types/Events.cs</p>
+
+<h2 id="events-api">Events REST API</h2>
+<p>Two endpoints (<code>EventsController</code>), both under policy <span class="badge role any">Any</span>. The events list is the durable, replayable view of the catalog above.</p>
+
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/events</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Retrieve a paginated list of past event records, newest first.</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Query param</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>offset</code></td><td><span class="type">int32</span></td><td><code>0</code></td><td>Number of records to skip. Must be &#8805; 0 (else <code>400</code>).</td></tr>
+<tr><td><code>limit</code></td><td><span class="type">int32</span></td><td><code>100</code></td><td>Page size. Must be &gt; 0 (else <code>400</code>).</td></tr>
+</tbody>
+</table>
+</div>
+<p>Ordering is <code>OrderByDescending(Timestamp)</code> then <code>Skip(offset).Take(limit)</code>. The total number of records is returned in the <code>X-Total-Count</code> response header (the web client reads <code>x-total-count</code>). The body is an array of <a href="#event-record"><code>EventRecord</code></a>.</p>
+<pre><code>GET /api/v0/events?offset=0&amp;limit=2
+X-Total-Count: 1543
+
+[
+  {
+    "id": "8a1b...",
+    "timestamp": "2026-06-16T12:34:56.789Z",
+    "type": "DownloadFileComplete",
+    "data": "{\"localFilename\":\"/downloads/a.mp3\",\"remoteFilename\":\"@@x\\\\a.mp3\",\"transfer\":{...}}"
+  },
+  {
+    "id": "7c2d...",
+    "timestamp": "2026-06-16T12:30:01.000Z",
+    "type": "RoomMessageReceived",
+    "data": "{\"message\":{\"roomName\":\"nicotine\",\"username\":\"bob\",\"message\":\"hi\"}}"
+  }
+]</code></pre>
+
+<div class="endpoint"><span class="badge post">POST</span><span class="path">/api/v0/events/{type}</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Raise a <strong>sample</strong> event of the given type (for testing integrations end-to-end). The <code>{type}</code> route value is matched case-insensitively against <code>EventType</code> names; <code>None</code> and <code>Any</code> are rejected (<code>400</code>), as is any unknown name. The request body is a JSON string <code>disambiguator</code> that is prefixed onto the generated placeholder field values, so repeated calls produce distinguishable sample events. The generated event is published on the bus (and thus persisted and dispatched to integrations) and returned with <code>201</code>.</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Param</th><th>In</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>type</code></td><td>route</td><td><span class="type">string</span></td><td>An <code>EventType</code> name, e.g. <code>DownloadFileComplete</code>. Case-insensitive.</td></tr>
+<tr><td><code>disambiguator</code></td><td>body</td><td><span class="type">string</span></td><td>A JSON string prepended to placeholder values (e.g. filenames, usernames).</td></tr>
+</tbody>
+</table>
+</div>
+<pre><code>POST /api/v0/events/RoomMessageReceived
+Content-Type: application/json
+
+"test-"
+
+// 201 Created
+{
+  "id": "…", "timestamp": "…", "type": "RoomMessageReceived", "version": 0,
+  "message": { "roomName": "test-room", "username": "test-username", "message": "test-message" }
+}</code></pre>
+<div class="note callout"><span class="label">Loopback</span><p>The brief's "loopback" endpoint is <code>POST /api/v0/application/loopback</code> (on the <em>application</em> controller, not the events controller). It accepts any JSON body and logs it at <code>Information</code> level, returning <code>200</code>. It is a connectivity/echo aid, not part of the events pipeline. Source: src/slskd/Core/API/Controllers/ApplicationController.cs.</p></div>
+<p class="src-ref">Source: src/slskd/Events/API/EventsController.cs</p>
+
+<h2 id="integrations">Webhooks &amp; Scripts</h2>
+<p>Two built-in event subscribers turn events into outbound side effects. Both subscribe to the bus as catch-all <code>Event</code> subscribers and then filter per configured entry by event type. Each subscriber fires asynchronously and independently — a slow or failing integration does not block the application or other integrations.</p>
+
+<h3 id="webhooks">Webhooks</h3>
+<p>Configured under <code>integrations.webhooks</code> as a map of named webhooks. When an event whose type matches a webhook's <code>on</code> list (or the wildcard <code>Any</code>) is raised, the service POSTs the event to the configured URL.</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Config key</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>on</code></td><td><span class="type">string[]</span></td><td><code>[]</code></td><td>Event type names that trigger this webhook. Use <code>Any</code> to match all.</td></tr>
+<tr><td><code>call.url</code></td><td><span class="type">string</span></td><td>—</td><td>Fully qualified URL (must start with <code>http://</code> or <code>https://</code>).</td></tr>
+<tr><td><code>call.headers</code></td><td>array of <code>{name, value}</code></td><td><code>[]</code></td><td>Custom request headers (e.g. an auth token for the receiver).</td></tr>
+<tr><td><code>call.ignoreCertificateErrors</code></td><td><span class="type">bool</span></td><td><code>false</code></td><td>Skip TLS certificate validation for the call.</td></tr>
+<tr><td><code>timeout</code></td><td><span class="type">int32</span></td><td><code>5000</code></td><td>Per-attempt HTTP timeout in milliseconds (min 500).</td></tr>
+<tr><td><code>retry.attempts</code></td><td><span class="type">int32</span></td><td><code>1</code></td><td>Max attempts before giving up; retries use exponential backoff (base 1000 ms, cap 30000 ms). Any non-success status is retried.</td></tr>
+</tbody>
+</table>
+</div>
+<p>The POST body is the event serialized as a single flat JSON object: <code>application/json</code>, camelCase, <strong>nulls retained</strong>, using the HTML-safe (<code>JavaScriptEncoder.Default</code>) encoder. The event is serialized via its concrete runtime type, so all payload fields are present alongside the base <code>id</code>/<code>timestamp</code>/<code>type</code>/<code>version</code> fields.</p>
+<pre><code>POST https://example.com/hook
+Content-Type: application/json
+
+{
+  "id": "…",
+  "timestamp": "2026-06-16T12:34:56.789Z",
+  "type": "DownloadFileComplete",
+  "version": 0,
+  "localFilename": "/downloads/a.mp3",
+  "remoteFilename": "@@abcd\\music\\a.mp3",
+  "transfer": { /* full Transfer object */ }
+}</code></pre>
+<div class="warn callout"><span class="label">No payload signature</span><p>As of this source, slskd does <strong>not</strong> sign webhook payloads (no HMAC header). Authenticate the receiver out-of-band by configuring a static secret header under <code>call.headers</code> and validating it server-side, and prefer <code>https</code>.</p></div>
+<p class="src-ref">Source: src/slskd/Integrations/Webhooks/WebhookService.cs; src/slskd/Core/Options.cs (IntegrationsOptions)</p>
+
+<h3 id="scripts">Scripts</h3>
+<p>Configured under <code>integrations.scripts</code> as a map of named scripts. When a matching event is raised, the service spawns a process; the full event JSON is passed to the process in the <code>SLSKD_SCRIPT_DATA</code> environment variable (same serialization as webhooks: camelCase, nulls retained, safe encoder).</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Config key</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>on</code></td><td><span class="type">string[]</span></td><td>Event type names that trigger this script (or <code>Any</code>).</td></tr>
+<tr><td><code>run.command</code></td><td><span class="type">string</span></td><td>"Command mode": run via the system shell (<code>cmd.exe /c</code> on Windows, <code>$SHELL -c</code> elsewhere). Takes precedence over the other modes.</td></tr>
+<tr><td><code>run.executable</code></td><td><span class="type">string</span></td><td>Executable to start; defaults to the system shell if omitted.</td></tr>
+<tr><td><code>run.args</code></td><td><span class="type">string</span></td><td>"Args mode" (default): argument string passed to the executable. Mutually exclusive with <code>arglist</code>.</td></tr>
+<tr><td><code>run.arglist</code></td><td><span class="type">string[]</span></td><td>"Args-list mode": list of arguments. Takes precedence over <code>args</code>.</td></tr>
+</tbody>
+</table>
+</div>
+<p>The process runs with <code>WorkingDirectory</code> set to the application's script directory. A non-empty STDERR is treated as failure (logged at <code>Warning</code>); STDOUT is captured and logged at <code>Debug</code>. Scripts read their input like so:</p>
+<pre><code>#!/usr/bin/env bash
+# $SLSKD_SCRIPT_DATA contains the event JSON
+type=$(echo "$SLSKD_SCRIPT_DATA" | jq -r '.type')
+file=$(echo "$SLSKD_SCRIPT_DATA" | jq -r '.localFilename')
+echo "completed $type: $file"</code></pre>
+<p class="src-ref">Source: src/slskd/Integrations/Scripts/ScriptService.cs; src/slskd/Core/Options.cs (IntegrationsOptions)</p>
+
+<h2 id="recipe">Connection recipe (language-agnostic)</h2>
+<p>To consume the application hub from a non-.NET client you must implement (or use a library that implements) the SignalR hub protocol. The sequence below is generic; substitute your platform's SignalR client where one exists (clients exist for JavaScript/TypeScript, Java, Python via <code>signalrcore</code>, Go via community libraries, etc.).</p>
+<pre><code>// 1. Obtain a token (see authentication.html):
+//      POST /api/v0/session  { "username", "password" }  -&gt; { "token": "&lt;jwt&gt;" }
+//    or use a configured API key directly.
+
+// 2. Negotiate. SignalR posts to the hub's /negotiate sub-path.
+//    Pass the token as a query parameter so it survives all transports.
+POST https://host:5030/hub/application/negotiate?negotiateVersion=1&amp;access_token=&lt;jwt&gt;
+//    -&gt; { "connectionId": "...", "connectionToken": "...",
+//         "availableTransports": [ { "transport": "WebSockets", ... }, ... ] }
+
+// 3. Open the chosen transport (prefer WebSockets):
+ws  wss://host:5030/hub/application?id=&lt;connectionToken&gt;&amp;access_token=&lt;jwt&gt;
+
+// 4. Send the SignalR handshake frame (JSON protocol), terminated by 0x1E:
+send  {"protocol":"json","version":1}
+
+// 5. Register handlers. For the JSON hub protocol, an incoming invocation is:
+//    {"type":1,"target":"STATE","arguments":[ {...state...} ]}
+on "STATE"   -&gt; replace local application state with arguments[0]
+on "OPTIONS" -&gt; replace local options with arguments[0]   // redacted
+
+// 6. Respond to server pings (type 6) with a ping, and reconnect with backoff
+//    on transport close. On reconnect, the hub re-sends the full STATE+OPTIONS
+//    snapshot, so no manual resync is required.</code></pre>
+<div class="tip callout"><span class="label">Tip</span><p>For durable, exactly-the-data-you-need consumption (build pipelines, notifications), skip SignalR entirely: configure a <a href="#webhooks">webhook</a> or <a href="#scripts">script</a> on the event types you care about, or poll <a href="#events-api"><code>GET /api/v0/events</code></a> and track the newest <code>timestamp</code> you have processed. These survive client downtime; SignalR does not.</p></div>
+<p class="src-ref">Source: src/web/src/lib/hubFactory.js; src/slskd/Program.cs; SignalR JSON hub protocol specification (Microsoft).</p>
+
+    <div class="page-nav-links">
+      <a class="prev" href="rest-api.html"><span class="dir">&larr; Previous</span><br><span class="ttl">REST API Reference</span></a>
+      <a class="next" href="relay.html"><span class="dir">Next &rarr;</span><br><span class="ttl">Relay Protocol</span></a>
+    </div>
+    <footer class="page-footer">
+      <span>slskd / Soulseek Protocol &amp; Model Specification &middot; derived from source (slskd, Soulseek.NET 10.0.1) &middot; AGPL-3.0</span>
+      <span>Not an official Soulseek document.</span>
+    </footer>
+  </main>
+</div>
+</div>
+<script src="script.js"></script>
+</body>
+</html>

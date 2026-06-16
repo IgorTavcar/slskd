@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Authentication &amp; Security · slskd Protocol &amp; Model Specification</title>
+<meta name="description" content="slskd / Soulseek network, protocol and data-model specification — Authentication &amp; Security. A language-agnostic reference for building clients, apps and services that interoperate with the Soulseek platform.">
+<link rel="stylesheet" href="style.css">
+<script>(function(){try{var t=localStorage.getItem('slskd-spec-theme');if(t){document.documentElement.setAttribute('data-theme',t);}else if(window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches){document.documentElement.setAttribute('data-theme','dark');}}catch(e){}})();</script>
+</head>
+<body>
+<div class="scrim"></div>
+<div class="layout">
+<aside class="sidebar">
+  <div class="brand">
+    <div class="logo">sd</div>
+    <div class="brand-text">
+      <span class="brand-title">slskd Spec</span>
+      <span class="brand-sub">Soulseek protocol &amp; model</span>
+    </div>
+  </div>
+  <div class="nav-filter-wrap"><input class="nav-filter" type="text" placeholder="Filter pages…" aria-label="Filter pages"></div>
+  <nav>
+  <div class="nav-group-label">Introduction</div>
+  <ul>
+    <li><a href="index.html"><span class="nav-num">1</span><span>Overview</span></a></li>
+    <li><a href="architecture.html"><span class="nav-num">2</span><span>Architecture &amp; Concepts</span></a></li>
+  </ul>
+  <div class="nav-group-label">The Soulseek Network</div>
+  <ul>
+    <li><a href="soulseek-protocol.html"><span class="nav-num">3</span><span>Soulseek Wire Protocol</span></a></li>
+    <li><a href="data-model.html"><span class="nav-num">4</span><span>Data Model &amp; Types</span></a></li>
+  </ul>
+  <div class="nav-group-label">Domains</div>
+  <ul>
+    <li><a href="search.html"><span class="nav-num">5</span><span>Search</span></a></li>
+    <li><a href="transfers.html"><span class="nav-num">6</span><span>Transfers &amp; Queueing</span></a></li>
+    <li><a href="users-rooms.html"><span class="nav-num">7</span><span>Users, Rooms &amp; Chat</span></a></li>
+    <li><a href="shares.html"><span class="nav-num">8</span><span>Shares &amp; Browsing</span></a></li>
+  </ul>
+  <div class="nav-group-label">Integration</div>
+  <ul>
+    <li class="active"><a href="authentication.html" aria-current="page"><span class="nav-num">9</span><span>Authentication &amp; Security</span></a></li>
+    <li><a href="rest-api.html"><span class="nav-num">10</span><span>REST API Reference</span></a></li>
+    <li><a href="realtime-api.html"><span class="nav-num">11</span><span>Real-Time API &amp; Events</span></a></li>
+    <li><a href="relay.html"><span class="nav-num">12</span><span>Relay Protocol</span></a></li>
+  </ul>
+</nav>
+</aside>
+<div class="main-col">
+  <header class="topbar">
+    <button class="menu-btn" aria-label="Toggle navigation">&#9776;</button>
+    <span class="crumb">Integration / <b>Authentication &amp; Security</b></span>
+    <span class="spacer"></span>
+    <a class="tb-link" href="index.html#sitemap">Contents</a>
+    <a class="tb-link" href="https://github.com/slskd/slskd" target="_blank" rel="noopener">GitHub</a>
+    <button class="theme-toggle" aria-label="Toggle dark mode" title="Toggle theme">◐</button>
+  </header>
+  <main class="content">
+
+<h1>Authentication &amp; Security</h1>
+<p class="page-lede">slskd protects its REST API and SignalR hubs with ASP.NET Core authentication. A client authenticates with one of two credential schemes — a <strong>JWT bearer token</strong> obtained by logging in with a username and password, or a pre-configured <strong>API key</strong> sent in a header. Each credential carries a <strong>role</strong> that gates which endpoints it can reach. This page documents the login flow, the two schemes, the role model, how the same credential authenticates SignalR connections, the "passthrough" mode used when authentication is disabled, and the security implications of CIDR scoping and reverse-proxy deployment.</p>
+
+<nav class="toc">
+  <div class="toc-title">On this page</div>
+  <ul>
+    <li><a href="#overview">Overview &amp; schemes</a></li>
+    <li><a href="#policies">Authentication policies</a></li>
+    <li><a href="#roles">Roles &amp; authorization</a></li>
+    <li><a href="#jwt">JWT login flow</a></li>
+    <li><a href="#session-endpoints">Session endpoints</a></li>
+    <li><a href="#api-keys">API keys</a></li>
+    <li><a href="#signalr">SignalR authentication</a></li>
+    <li><a href="#passthrough">Disabled / passthrough auth</a></li>
+    <li><a href="#cidr-proxy">CIDR scoping &amp; reverse proxies</a></li>
+    <li><a href="#metrics-relay">Metrics &amp; relay auth</a></li>
+    <li><a href="#recipes">How to authenticate (recipes)</a></li>
+    <li><a href="#config">Configuration reference</a></li>
+  </ul>
+</nav>
+
+<h2 id="overview">Overview &amp; schemes</h2>
+<p>slskd exposes two endpoint families — a versioned REST API rooted at <code>/api/v0</code> and a set of SignalR hubs rooted at <code>/hub</code>. Both are protected by the same authentication subsystem, configured once at startup in <code>Program.cs</code>. A caller presents <em>one</em> credential; the framework resolves it to a principal carrying a <strong>name</strong> and a single <strong>role</strong>, and the endpoint's authorization policy decides whether to admit the request.</p>
+
+<div class="table-wrap"><table>
+<thead><tr><th>Scheme</th><th>Credential</th><th>Transport</th><th>How obtained</th></tr></thead>
+<tbody>
+<tr><td><strong>JWT bearer</strong></td><td>Signed JSON Web Token (HS256)</td><td><code>Authorization: Bearer &lt;token&gt;</code> header (REST); <code>?access_token=&lt;token&gt;</code> query parameter (SignalR)</td><td>POST <code>/api/v0/session</code> with username + password</td></tr>
+<tr><td><strong>API key</strong></td><td>Pre-shared static string (16–255 chars)</td><td><code>X-API-Key: &lt;key&gt;</code> header (REST); see <a href="#signalr">SignalR</a> for hubs</td><td>Configured under <code>web.authentication.api_keys</code> (or the primary key via <code>-k</code> / <code>SLSKD_API_KEY</code>)</td></tr>
+</tbody>
+</table></div>
+
+<p>The scheme names registered with ASP.NET Core are <code>Bearer</code> (the JWT default, <code>JwtBearerDefaults.AuthenticationScheme</code>), <code>ApiKey</code>, and — only when authentication is disabled — <code>Passthrough</code>.</p>
+<p class="src-ref">Source: src/slskd/Program.cs (ConfigureAspDotNetServices, ~L822–960); src/slskd/Common/Authentication/ApiKeyAuthentication.cs; src/web/src/lib/api.js</p>
+
+<div class="note callout"><span class="label">Note</span><p>Authentication is <strong>enabled by default</strong>. The default username and password are both <code>slskd</code>; the documentation strongly recommends changing both before exposing the instance. Authentication can be globally disabled with <code>web.authentication.disabled</code> (CLI <code>-X</code>/<code>--no-auth</code>, env <code>SLSKD_NO_AUTH</code>) — see <a href="#passthrough">Passthrough</a>.</p></div>
+
+<h2 id="policies">Authentication policies</h2>
+<p>Every protected endpoint is decorated with <code>[Authorize(Policy = …)]</code>. Three policies are defined in <code>AuthPolicy</code>; each names a set of acceptable authentication schemes and requires an authenticated user.</p>
+
+<div class="table-wrap"><table>
+<thead><tr><th>Policy constant</th><th>String</th><th>Accepted schemes (auth enabled)</th><th>Typical use</th></tr></thead>
+<tbody>
+<tr><td><code>AuthPolicy.Any</code></td><td><code>"Any"</code></td><td><code>ApiKey</code> <em>and</em> <code>Bearer</code></td><td>The vast majority of endpoints and all hubs. Accepts either credential type.</td></tr>
+<tr><td><code>AuthPolicy.JwtOnly</code></td><td><code>"Jwt"</code></td><td><code>Bearer</code> only</td><td>State-mutating administrative actions (e.g. updating options, restart/shutdown). An API key cannot satisfy this policy on the REST path.</td></tr>
+<tr><td><code>AuthPolicy.ApiKeyOnly</code></td><td><code>"ApiKey"</code></td><td><code>ApiKey</code> only</td><td>Defined but reserved; little direct use in controllers.</td></tr>
+</tbody>
+</table></div>
+
+<p>Because <code>Any</code> lists the <code>ApiKey</code> scheme first, an <code>X-API-Key</code> header is evaluated before the bearer token. A request to an <code>Any</code> endpoint succeeds if <em>either</em> scheme produces a valid authenticated principal whose role also satisfies any <code>Roles =</code> constraint on the action (see <a href="#roles">Roles</a>).</p>
+
+<div class="warn callout"><span class="label">Warn</span><p><code>JwtOnly</code> endpoints reject API-key credentials on the REST path: the policy only admits the <code>Bearer</code> scheme. To call an administrative endpoint such as <code>PATCH&nbsp;/api/v0/options</code> you must hold a JWT (i.e. log in), not an API key — and that JWT's role must be <span class="badge role admin">Administrator</span>.</p></div>
+<p class="src-ref">Source: src/slskd/Common/Authentication/AuthPolicy.cs; src/slskd/Program.cs (AddAuthorization, ~L846–866)</p>
+
+<h2 id="roles">Roles &amp; authorization</h2>
+<p>Every credential resolves to exactly one <code>Role</code>. The enum is defined in <code>slskd.Authentication.Role</code>:</p>
+
+<div class="table-wrap"><table>
+<thead><tr><th>Role</th><th>Value</th><th>Badge</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>ReadOnly</code></td><td><span class="type">0</span></td><td><span class="badge role readonly">ReadOnly</span></td><td>Read-only access. Default role for configured API keys.</td></tr>
+<tr><td><code>ReadWrite</code></td><td><span class="type">1</span></td><td><span class="badge role readwrite">ReadWrite</span></td><td>Read plus mutating operations (queue downloads, send chat, etc.) that are not administrator-gated.</td></tr>
+<tr><td><code>Guest</code></td><td><span class="type">2</span></td><td><span class="badge role">Guest</span></td><td>Defined in the enum and referenced by the <code>GuestOrAdministrator</code> grouping; reserved for limited access scenarios.</td></tr>
+<tr><td><code>Administrator</code></td><td><span class="type">3</span></td><td><span class="badge role admin">Administrator</span></td><td>Full access, including administrator-only endpoints. Default for the JWT issued by login and for the primary API key.</td></tr>
+</tbody>
+</table></div>
+
+<p>Authorization is enforced two ways. The policy selects which <em>scheme(s)</em> may authenticate; an optional <code>Roles =</code> argument on <code>[Authorize]</code> restricts which <em>roles</em> are admitted. The role groupings used in the source are defined in <code>AuthRole</code>:</p>
+
+<div class="table-wrap"><table>
+<thead><tr><th><code>AuthRole</code> constant</th><th>Role list (comma-separated)</th><th>Admits</th></tr></thead>
+<tbody>
+<tr><td><code>Any</code></td><td><code>ReadOnly,ReadWrite,Guest,Administrator</code></td><td>Any authenticated role</td></tr>
+<tr><td><code>AdministratorOnly</code></td><td><code>Administrator</code></td><td><span class="badge role admin">Administrator</span></td></tr>
+<tr><td><code>ReadWriteOrAdministrator</code></td><td><code>ReadWrite,Administrator</code></td><td><span class="badge role readwrite">ReadWrite</span> <span class="badge role admin">Administrator</span></td></tr>
+<tr><td><code>GuestOrAdministrator</code></td><td><code>Guest,Administrator</code></td><td><span class="badge role">Guest</span> <span class="badge role admin">Administrator</span></td></tr>
+</tbody>
+</table></div>
+
+<p>The role is carried in the principal as the ASP.NET Core role claim (<code>ClaimTypes.Role</code>, serialized in the JWT as <code>http://schemas.microsoft.com/ws/2008/06/identity/claims/role</code>) with the role <em>name</em> as its value (e.g. <code>"Administrator"</code>). When no <code>Roles =</code> is specified, only the policy (scheme) is enforced and any authenticated role is admitted.</p>
+
+<div class="note callout"><span class="label">Note</span><p>Most endpoints use <code>[Authorize(Policy = AuthPolicy.Any)]</code> with no role constraint — they admit any authenticated principal. Administrative actions add <code>Roles = AuthRole.AdministratorOnly</code> and frequently also restrict the policy to <code>JwtOnly</code>. For example, <code>OptionsController</code> and <code>ApplicationController</code> gate option-update, restart, shutdown, and GC operations with <code>[Authorize(Policy = AuthPolicy.JwtOnly, Roles = AuthRole.AdministratorOnly)]</code>. See <a href="rest-api.html">REST API Reference</a> for the per-endpoint matrix.</p></div>
+<p class="src-ref">Source: src/slskd/Common/Authentication/Role.cs, AuthRole.cs; src/slskd/Core/Security/SecurityService.cs (GenerateJwt); src/slskd/Core/API/Controllers/OptionsController.cs, ApplicationController.cs</p>
+
+<h2 id="jwt">JWT login flow</h2>
+<p>A JWT is obtained by POSTing credentials to the session endpoint. The current implementation authenticates only the single configured administrator account (<code>web.authentication.username</code> / <code>password</code>); a successful login always yields an <span class="badge role admin">Administrator</span> token.</p>
+
+<div class="endpoint"><span class="badge post">POST</span><span class="path">/api/v0/session</span><span class="auth"><span class="badge role any">Anonymous</span></span></div>
+
+<p><strong>Request body</strong> — <code>LoginRequest</code> (JSON, camelCase):</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>username</code></td><td><span class="type">string</span></td><td>Must equal <code>web.authentication.username</code>.</td></tr>
+<tr><td><code>password</code></td><td><span class="type">string</span></td><td>Must equal <code>web.authentication.password</code>.</td></tr>
+</tbody>
+</table></div>
+
+<pre><code>POST /api/v0/session HTTP/1.1
+Content-Type: application/json
+
+{ "username": "slskd", "password": "slskd" }</code></pre>
+
+<p><strong>Responses</strong></p>
+<div class="table-wrap"><table>
+<thead><tr><th>Status</th><th>Condition</th></tr></thead>
+<tbody>
+<tr><td><span class="type">200</span></td><td>Credentials valid. Body is a <code>TokenResponse</code>.</td></tr>
+<tr><td><span class="type">400</span></td><td>Body missing, or username/password missing/blank.</td></tr>
+<tr><td><span class="type">401</span></td><td>Credentials did not match.</td></tr>
+<tr><td><span class="type">403</span></td><td>Returned (<code>Forbid</code>) when the daemon runs in <strong>headless</strong> mode — the web UI/login is disabled.</td></tr>
+</tbody>
+</table></div>
+
+<p><strong>Response body</strong> — <code>TokenResponse</code> (JSON, camelCase):</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>token</code></td><td><span class="type">string</span></td><td>The serialized, signed JWT. Send this as the bearer token.</td></tr>
+<tr><td><code>tokenType</code></td><td><span class="type">string</span></td><td>Always <code>"Bearer"</code> (<code>JwtBearerDefaults.AuthenticationScheme</code>).</td></tr>
+<tr><td><code>expires</code></td><td><span class="type">int64</span></td><td>Expiry as a Unix time in <strong>seconds</strong> (token <code>exp</code>/<code>ValidTo</code>).</td></tr>
+<tr><td><code>issued</code></td><td><span class="type">int64</span></td><td>Issued-at as a Unix time in <strong>seconds</strong> (<code>ValidFrom</code>).</td></tr>
+<tr><td><code>notBefore</code></td><td><span class="type">int64</span></td><td>Not-before (<code>nbf</code>) as a Unix time in seconds.</td></tr>
+<tr><td><code>name</code></td><td><span class="type">string</span></td><td>Value of the token's Name claim (the username).</td></tr>
+</tbody>
+</table></div>
+
+<pre><code>HTTP/1.1 200 OK
+Content-Type: application/json
+
+{
+  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ...",
+  "tokenType": "Bearer",
+  "expires": 1750636800,
+  "issued": 1750032000,
+  "notBefore": 1750032000,
+  "name": "slskd"
+}</code></pre>
+
+<h3 id="jwt-claims">Token contents</h3>
+<p>The token is signed with HMAC-SHA256 using <code>web.authentication.jwt.key</code> as the symmetric key. Claims emitted by <code>SecurityService.GenerateJwt</code>:</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Claim</th><th>Value</th><th>Notes</th></tr></thead>
+<tbody>
+<tr><td><code>ClaimTypes.Name</code> (<code>…/claims/name</code>)</td><td>username</td><td>The authenticated identity.</td></tr>
+<tr><td><code>name</code></td><td>username</td><td>Convenience duplicate of the name.</td></tr>
+<tr><td><code>ClaimTypes.NameIdentifier</code></td><td>random GUID</td><td>Unique per token.</td></tr>
+<tr><td><code>ClaimTypes.Role</code> (<code>…/claims/role</code>)</td><td>role name, e.g. <code>Administrator</code></td><td>Drives <code>Roles =</code> authorization.</td></tr>
+<tr><td><code>iat</code></td><td>issued-at, Unix seconds</td><td>Set explicitly as a string claim.</td></tr>
+<tr><td><code>iss</code></td><td><code>slskd</code> (<code>Program.AppName</code>)</td><td>Validated — see below.</td></tr>
+<tr><td><code>nbf</code> / <code>exp</code></td><td>Unix seconds</td><td>Validity window.</td></tr>
+</tbody>
+</table></div>
+
+<p>Validation parameters applied by the bearer handler: issuer must equal <code>slskd</code> (<code>ValidateIssuer = true</code>); signature is required and validated against the configured key; lifetime is validated with a <strong>5-minute clock skew</strong>; audience is <em>not</em> validated. The token TTL defaults to <code>604800000</code> ms (7 days) and is configurable via <code>web.authentication.jwt.ttl</code> (milliseconds; minimum 3600).</p>
+
+<div class="warn callout"><span class="label">Warn</span><p>If <code>jwt.key</code> is left unset, a fresh random 32-byte key is generated <strong>at every start</strong>. This is secure but invalidates all previously issued tokens on restart, forcing re-login. Supply a stable key (≥32 chars) if you need tokens to survive restarts. Anyone who holds the key can mint valid tokens — treat it as a secret.</p></div>
+<p class="src-ref">Source: src/slskd/Core/Security/SecurityService.cs (GenerateJwt); src/slskd/Core/API/DTO/TokenResponse.cs, LoginRequest.cs; src/slskd/Program.cs (AddJwtBearer, ~L868–882); src/slskd/Core/Options.cs (JwtOptions, ~L2216–2238)</p>
+
+<h2 id="session-endpoints">Session endpoints</h2>
+<p>The <code>SessionController</code> provides three routes used to authenticate and to probe the auth configuration.</p>
+
+<div class="endpoint"><span class="badge post">POST</span><span class="path">/api/v0/session</span><span class="auth"><span class="badge role any">Anonymous</span></span></div>
+<p>Log in. See <a href="#jwt">JWT login flow</a>.</p>
+
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/session</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Validate the presented credential ("whoami" no-op). Returns <span class="type">200</span> if the bearer token or API key is valid, <span class="type">401</span> otherwise. The web UI calls this on load to detect an expired token. Policy: <code>AuthPolicy.Any</code> — both a JWT and an API key are accepted. The body is empty on success.</p>
+
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/session/enabled</span><span class="auth"><span class="badge role any">Anonymous</span></span></div>
+<p>Returns a bare JSON boolean: <code>true</code> when authentication is enabled, <code>false</code> when disabled. This is the negation of <code>web.authentication.disabled</code> as read at startup. Decorated <code>[AllowAnonymous]</code>, so it is callable without any credential and is the canonical way for a client to discover whether it must authenticate.</p>
+
+<pre><code>GET /api/v0/session/enabled HTTP/1.1
+
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+true</code></pre>
+<p class="src-ref">Source: src/slskd/Core/API/Controllers/SessionController.cs</p>
+
+<h2 id="api-keys">API keys</h2>
+<p>API keys are static strings configured ahead of time that let a non-browser client authenticate without performing a login. Each key carries a name (its config dictionary key), a role, and an optional CIDR allow-list. Keys are sent in the <code>X-API-Key</code> request header for REST calls.</p>
+
+<pre><code>GET /api/v0/searches HTTP/1.1
+X-API-Key: 0123456789abcdef0123456789abcdef</code></pre>
+
+<h3 id="api-key-config">Configuration</h3>
+<p>Keys are defined under <code>web.authentication.api_keys</code> as a map of <em>name → key options</em>:</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Field</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>key</code></td><td><span class="type">string</span></td><td>—</td><td>The secret value. Must be <strong>16–255 characters</strong>.</td></tr>
+<tr><td><code>role</code></td><td><span class="type">string</span></td><td><code>ReadOnly</code></td><td>One of <code>ReadOnly</code>, <code>ReadWrite</code>, <code>Guest</code>, <code>Administrator</code> (case-insensitive). Validated against the <code>Role</code> enum.</td></tr>
+<tr><td><code>cidr</code></td><td><span class="type">string</span></td><td><code>0.0.0.0/0,::/0</code></td><td>Comma-separated CIDR allow-list (IPv4 and/or IPv6). The default matches any address. IPv4-mapped IPv6 (<code>::ffff:…</code>) CIDRs are rejected at validation.</td></tr>
+</tbody>
+</table></div>
+
+<pre><code>web:
+  authentication:
+    api_keys:
+      my_api_key:
+        key: &lt;some string between 16 and 255 characters&gt;
+        role: readwrite
+        cidr: 0.0.0.0/0,::/0</code></pre>
+
+<h3 id="primary-api-key">Primary API key</h3>
+<p>A single "primary" key may also be supplied on the command line (<code>-k</code>/<code>--api-key</code>) or via the <code>SLSKD_API_KEY</code> environment variable. Because those sources are plain strings, the role and CIDR are encoded as semicolon-separated tuples and prepended to the key value:</p>
+<pre><code>role=ReadOnly;cidr=0.0.0.0/0,::/0;&lt;16-to-255-character-key&gt;</code></pre>
+<p>If only a bare key is supplied (no tuples), the primary key defaults to role <span class="badge role admin">Administrator</span> and CIDR <code>0.0.0.0/0,::/0</code> — note this differs from the <code>ReadOnly</code> default of named keys. The primary key is checked <em>before</em> the named-keys map during authentication. A random suitable value can be generated with <code>--generate-secret</code>.</p>
+
+<h3 id="api-key-validation">Validation behavior</h3>
+<p>On each request the handler reads <code>X-API-Key</code>; if absent it returns "no result" (allowing another scheme to try). If present, <code>SecurityService.AuthenticateWithApiKey</code>:</p>
+<ol>
+<li>Matches the supplied string exactly against the primary key (if any) and the named keys; an unmatched key raises a not-found error and the request is rejected (<code>401</code>).</li>
+<li>Normalizes an IPv4-mapped IPv6 caller address (<code>::ffff:…</code>) back to IPv4.</li>
+<li>Confirms the caller IP falls within at least one CIDR of the matched key; otherwise an out-of-range error is raised and the request is rejected.</li>
+<li>On success, builds a principal with the key <em>name</em> as the identity and the key's role.</li>
+</ol>
+
+<div class="danger callout"><span class="label">Danger</span><p>API keys do <strong>not</strong> expire. Anyone who captures a key has indefinite access at that key's role. Using API-key (or any) authentication over plain HTTP exposes the key to eavesdroppers. Prefer HTTPS, scope keys with CIDR, and use a distinct key per consumer so a single key can be revoked without disrupting others.</p></div>
+<p class="src-ref">Source: src/slskd/Common/Authentication/ApiKeyAuthentication.cs; src/slskd/Core/Security/SecurityService.cs (AuthenticateWithApiKey, ctor); src/slskd/Core/Options.cs (ApiKeyOptions, ~L2243–2294; WebAuthenticationOptions.Validate)</p>
+
+<h2 id="signalr">SignalR authentication</h2>
+<p>The SignalR hubs are mounted at the following paths and each requires authentication:</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Hub path</th><th>Authorization</th><th>Purpose</th></tr></thead>
+<tbody>
+<tr><td><code>/hub/application</code></td><td><code>[Authorize(Policy = AuthPolicy.Any)]</code></td><td>Application state, server connection, transfer events.</td></tr>
+<tr><td><code>/hub/logs</code></td><td><code>[Authorize(Policy = AuthPolicy.Any)]</code></td><td>Live log stream.</td></tr>
+<tr><td><code>/hub/search</code></td><td><code>[Authorize(Policy = AuthPolicy.Any)]</code></td><td>Live search responses.</td></tr>
+<tr><td><code>/hub/relay</code></td><td><code>[Authorize]</code></td><td>Relay agent connections — see <a href="relay.html">Relay Protocol</a>.</td></tr>
+</tbody>
+</table></div>
+
+<p>Browser SignalR clients cannot set arbitrary headers on the WebSocket handshake, so the token is passed as the <strong><code>access_token</code> query-string parameter</strong>. A <code>JwtBearerEvents.OnMessageReceived</code> handler detects requests whose path begins with <code>/hub</code> and resolves the token in this order:</p>
+<ol>
+<li>If <code>?access_token=…</code> is present, it is used as the token (takes precedence over any header).</li>
+<li>Else, if an <code>Authorization: Bearer …</code> header is present, the bearer value is extracted. The handler then attempts to interpret that value as an <strong>API key</strong>: if it validates (including CIDR), a fresh short-lived JWT (TTL <code>1000</code> ms) is minted for that key's name and role and used as the connection token. If it is not a valid API key, the raw value is passed through as a (presumably) JWT for the normal bearer pipeline to validate.</li>
+</ol>
+
+<pre><code>wss://host:5031/hub/application?access_token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...</code></pre>
+
+<div class="note callout"><span class="label">Note</span><p>For an HTTP-header SignalR client you may present an API key as <code>Authorization: Bearer &lt;api-key&gt;</code>; the <code>/hub</code> handler converts a valid key into a short-lived JWT internally. For browser clients, put a JWT (obtained from login) in <code>?access_token=</code>. The short 1000&nbsp;ms TTL of the key-derived token only needs to cover the handshake; the established connection persists independently of that token's expiry.</p></div>
+<p class="src-ref">Source: src/slskd/Program.cs (JwtBearerEvents.OnMessageReceived, ~L884–926; MapHub, ~L1113–1116); src/slskd/Core/API/Hubs/ApplicationHub.cs, LogsHub.cs; src/slskd/Search/API/Hubs/SearchHub.cs; src/slskd/Relay/API/Hubs/RelayHub.cs</p>
+
+<h2 id="passthrough">Disabled / passthrough authentication</h2>
+<p>When <code>web.authentication.disabled</code> is <code>true</code> (CLI <code>-X</code>/<code>--no-auth</code>, env <code>SLSKD_NO_AUTH</code>), slskd registers a single <code>Passthrough</code> authentication scheme in place of bearer/API-key. The <code>PassthroughAuthenticationHandler</code> unconditionally returns a successful ticket for the username <code>Anonymous</code> with role <span class="badge role admin">Administrator</span>. All three policies (<code>Any</code>, <code>JwtOnly</code>, <code>ApiKeyOnly</code>) are wired to this scheme, so <strong>every request — including administrator-only endpoints — is admitted without any credential</strong>.</p>
+
+<p>The daemon logs <code>"Authentication of web requests is DISABLED"</code> at startup in this mode. On the client side, the web UI detects disabled auth via <code>GET /session/enabled</code> and engages "passthrough": it stores the sentinel token value <code>"n/a"</code> and stops attaching an <code>Authorization</code> header to requests.</p>
+
+<div class="danger callout"><span class="label">Danger</span><p>Disabling authentication grants full <span class="badge role admin">Administrator</span> control to anyone who can reach the API — there is no credential check at all. Only do this on a trusted, isolated network, or behind a reverse proxy that performs its own authentication. Never expose a passthrough instance to the public internet.</p></div>
+<p class="src-ref">Source: src/slskd/Common/Authentication/PassthroughAuthentication.cs; src/slskd/Program.cs (disabled branch, ~L930–960); src/web/src/lib/session.js, token.js; src/web/src/config.js (tokenPassthroughValue = 'n/a')</p>
+
+<h2 id="cidr-proxy">CIDR scoping &amp; reverse proxies</h2>
+<p>CIDR scoping (API keys only) is evaluated against the <em>socket remote address</em> of the connection — <code>HttpContext.Connection.RemoteIpAddress</code>. This has important consequences behind any ingress device.</p>
+
+<div class="warn callout"><span class="label">Warn</span><p>Behind a reverse proxy, ingress controller, or load balancer, the remote IP seen by slskd is the <strong>proxy's</strong> address, not the original client's. slskd deliberately does <strong>not</strong> honor <code>X-Forwarded-For</code> (or similar) headers, because a malicious client could forge them. CIDR filtering therefore does not distinguish real clients in a proxied deployment — enforce IP restrictions at the point of ingress instead.</p></div>
+
+<p><strong>URL base.</strong> When slskd runs under a sub-path, set <code>web.url_base</code> (default <code>/</code>; e.g. <code>/slskd</code>, env <code>SLSKD_URL_BASE</code>). All API and hub paths are then prefixed with that base. A client must build request URLs against the same base: the web client computes <code>{base}/api/v0</code> and <code>{base}/hub</code> from the configured <code>urlBase</code>. slskd advertises the base in the <code>X-URL-Base</code> response header (CORS-exposed).</p>
+
+<p><strong>CORS.</strong> The server registers a permissive <code>AllowAll</code> CORS policy (any origin, any header, any method, credentials allowed) and exposes the <code>X-URL-Base</code> and <code>X-Total-Count</code> headers. This permissiveness means the network boundary — not CORS — is the security perimeter.</p>
+
+<p><strong>HTTPS.</strong> HTTPS is enabled by default on port <code>5031</code> (option <code>web.https</code>); plain HTTP listens on port <code>5030</code>. <code>web.https.force</code> redirects HTTP to HTTPS. Because both JWTs and API keys travel in headers (and tokens travel in the SignalR query string), transport encryption is the only thing preventing credential capture on the wire.</p>
+<p class="src-ref">Source: src/slskd/Program.cs (AddCors, ~L824–829); src/slskd/Core/Options.cs (UrlBase ~L2056, HttpsOptions ~L2300–2372); src/web/src/config.js; docs/config.md (Authentication, Remote Configuration); docs/reverse_proxy.md</p>
+
+<h2 id="metrics-relay">Metrics &amp; relay authentication</h2>
+<p>Two adjacent surfaces use different credential mechanisms and are worth calling out.</p>
+
+<h3 id="metrics-auth">Prometheus metrics</h3>
+<p>When <code>metrics.enabled</code> is true, the metrics endpoint (default URL <code>/metrics</code>) is protected by <strong>HTTP Basic</strong> auth using <code>metrics.authentication.username</code> / <code>password</code> — independent of the JWT/API-key system. It can be opened to anonymous access via <code>metrics.authentication.disabled</code> (which logs a warning). Send <code>Authorization: Basic &lt;base64(user:pass)&gt;</code>; a mismatch returns <span class="type">401</span>.</p>
+<p class="src-ref">Source: src/slskd/Program.cs (metrics endpoint, ~L1121–1160); src/slskd/Core/Options.cs (Metrics.Authentication)</p>
+
+<h3 id="relay-auth">Relay</h3>
+<p>The relay subsystem (controller ↔ agent) layers an additional <strong>shared secret</strong> on top of API-key authentication. An agent connects to the controller's <code>/hub/relay</code> using an API key (for which the controller must have at least one key configured), and additionally proves possession of a per-agent secret. The relay hub is gated by a bare <code>[Authorize]</code> (any authenticated principal) and then performs its own secret check. Forcing HTTPS for relay traffic is strongly recommended so that API keys and agent secrets are not exposed. Full details are on the <a href="relay.html">Relay Protocol</a> page.</p>
+<p class="src-ref">Source: src/slskd/Relay/API/Hubs/RelayHub.cs; docs/config.md (Remote Configuration / Relay)</p>
+
+<h2 id="recipes">How to authenticate (recipes)</h2>
+
+<h3 id="recipe-discover">0. Discover whether auth is required</h3>
+<pre><code>GET /api/v0/session/enabled
+→ 200  true     # must authenticate
+→ 200  false    # passthrough: send no credential; you are Administrator</code></pre>
+
+<h3 id="recipe-jwt">1. REST with a JWT (username/password)</h3>
+<pre><code># Log in
+POST /api/v0/session
+Content-Type: application/json
+
+{ "username": "slskd", "password": "slskd" }
+
+→ 200
+{ "token": "eyJ…", "tokenType": "Bearer", "expires": 1750636800, ... }
+
+# Use the token on subsequent requests
+GET /api/v0/searches
+Authorization: Bearer eyJ…
+
+# Re-validate / detect expiry at any time
+GET /api/v0/session
+Authorization: Bearer eyJ…
+→ 200 (valid)  |  401 (expired/invalid → log in again)</code></pre>
+
+<h3 id="recipe-apikey">2. REST with an API key</h3>
+<pre><code>GET /api/v0/transfers/downloads
+X-API-Key: 0123456789abcdef0123456789abcdef
+→ 200   # role of the key must satisfy the endpoint
+        # JwtOnly endpoints (e.g. PATCH /api/v0/options) reject API keys</code></pre>
+
+<h3 id="recipe-signalr">3. SignalR (browser-style, query parameter)</h3>
+<pre><code># Obtain a JWT via POST /api/v0/session, then:
+wss://host:5031/hub/application?access_token=eyJ…
+# (negotiate + websocket; the access_token applies to both)</code></pre>
+
+<h3 id="recipe-signalr-header">4. SignalR (header-capable client, API key)</h3>
+<pre><code># A non-browser client may present an API key as a bearer value;
+# the /hub handler converts a valid key into a short-lived JWT.
+GET /hub/application/negotiate
+Authorization: Bearer 0123456789abcdef0123456789abcdef</code></pre>
+
+<div class="tip callout"><span class="label">Tip</span><p>A robust client should: (1) call <code>GET /session/enabled</code> once; if <code>false</code>, send no credential. (2) Otherwise prefer an API key for headless/long-running integrations (no expiry handling) <em>or</em> log in for a JWT when administrator-only endpoints are needed. (3) On any <span class="type">401</span> from a JWT, re-login; API keys never expire but may be revoked (also surfacing as <span class="type">401</span>).</p></div>
+
+<h2 id="config">Configuration reference</h2>
+<p>Authentication settings live under <code>web.authentication</code> (plus <code>web.https</code> and <code>web.url_base</code>). Options marked <em>requires restart</em> are read once at startup.</p>
+
+<div class="table-wrap"><table>
+<thead><tr><th>Option (YAML)</th><th>CLI / Env</th><th>Type</th><th>Default</th><th>Notes</th></tr></thead>
+<tbody>
+<tr><td><code>web.authentication.disabled</code></td><td><code>-X</code>/<code>--no-auth</code> · <code>SLSKD_NO_AUTH</code></td><td><span class="type">bool</span></td><td><code>false</code></td><td>Disables auth → passthrough Administrator. Restart.</td></tr>
+<tr><td><code>web.authentication.username</code></td><td><code>-u</code>/<code>--username</code> · <code>SLSKD_USERNAME</code></td><td><span class="type">string</span></td><td><code>slskd</code></td><td>Login username (1–255 chars).</td></tr>
+<tr><td><code>web.authentication.password</code></td><td><code>-p</code>/<code>--password</code> · <code>SLSKD_PASSWORD</code></td><td><span class="type">string</span></td><td><code>slskd</code></td><td>Login password (1–255 chars).</td></tr>
+<tr><td><code>web.authentication.jwt.key</code></td><td><code>--jwt-key</code> · <code>SLSKD_JWT_KEY</code></td><td><span class="type">string</span></td><td>random per start</td><td>HS256 signing key (32–255 chars). Restart.</td></tr>
+<tr><td><code>web.authentication.jwt.ttl</code></td><td><code>--jwt-ttl</code> · <code>SLSKD_JWT_TTL</code></td><td><span class="type">int32</span></td><td><code>604800000</code></td><td>Token lifetime in <strong>ms</strong> (min 3600). Restart.</td></tr>
+<tr><td><code>web.authentication.api_key</code></td><td><code>-k</code>/<code>--api-key</code> · <code>SLSKD_API_KEY</code></td><td><span class="type">string</span></td><td>—</td><td>Primary key; tuple-encodes role/cidr; defaults to Administrator. Restart.</td></tr>
+<tr><td><code>web.authentication.api_keys.&lt;name&gt;.key</code></td><td>—</td><td><span class="type">string</span></td><td>—</td><td>Named key value (16–255 chars).</td></tr>
+<tr><td><code>web.authentication.api_keys.&lt;name&gt;.role</code></td><td>—</td><td><span class="type">string</span></td><td><code>ReadOnly</code></td><td>One of the four roles.</td></tr>
+<tr><td><code>web.authentication.api_keys.&lt;name&gt;.cidr</code></td><td>—</td><td><span class="type">string</span></td><td><code>0.0.0.0/0,::/0</code></td><td>Comma-separated CIDR allow-list.</td></tr>
+<tr><td><code>web.url_base</code></td><td>—  · <code>SLSKD_URL_BASE</code></td><td><span class="type">string</span></td><td><code>/</code></td><td>Sub-path prefix for all routes.</td></tr>
+<tr><td><code>web.https.disabled</code></td><td><code>--no-https</code> · <code>SLSKD_NO_HTTPS</code></td><td><span class="type">bool</span></td><td><code>false</code></td><td>Disable the HTTPS listener. Restart.</td></tr>
+<tr><td><code>web.https.port</code></td><td><code>-L</code>/<code>--https-port</code> · <code>SLSKD_HTTPS_PORT</code></td><td><span class="type">int32</span></td><td><code>5031</code></td><td>HTTPS listen port. Restart.</td></tr>
+<tr><td><code>web.https.force</code></td><td><code>-f</code>/<code>--force-https</code> · <code>SLSKD_HTTPS_FORCE</code></td><td><span class="type">bool</span></td><td><code>false</code></td><td>Redirect HTTP → HTTPS. Restart.</td></tr>
+</tbody>
+</table></div>
+<p class="src-ref">Source: src/slskd/Core/Options.cs (WebAuthenticationOptions ~L2087–2295, JwtOptions, ApiKeyOptions, HttpsOptions, UrlBase); docs/config.md (Authentication)</p>
+
+<div class="note callout"><span class="label">Note</span><p>Default HTTP/HTTPS ports: HTTP <code>5030</code>, HTTPS <code>5031</code>. The session, role, and policy details above are exactly as enforced in code; where this page states behavior that is configurable or version-dependent (e.g. "login authenticates only the admin account"), that reflects the source as read and is noted inline.</p></div>
+
+    <div class="page-nav-links">
+      <a class="prev" href="shares.html"><span class="dir">&larr; Previous</span><br><span class="ttl">Shares &amp; Browsing</span></a>
+      <a class="next" href="rest-api.html"><span class="dir">Next &rarr;</span><br><span class="ttl">REST API Reference</span></a>
+    </div>
+    <footer class="page-footer">
+      <span>slskd / Soulseek Protocol &amp; Model Specification &middot; derived from source (slskd, Soulseek.NET 10.0.1) &middot; AGPL-3.0</span>
+      <span>Not an official Soulseek document.</span>
+    </footer>
+  </main>
+</div>
+</div>
+<script src="script.js"></script>
+</body>
+</html>

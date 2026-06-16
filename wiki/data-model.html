@@ -1,0 +1,836 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Data Model &amp; Types · slskd Protocol &amp; Model Specification</title>
+<meta name="description" content="slskd / Soulseek network, protocol and data-model specification — Data Model &amp; Types. A language-agnostic reference for building clients, apps and services that interoperate with the Soulseek platform.">
+<link rel="stylesheet" href="style.css">
+<script>(function(){try{var t=localStorage.getItem('slskd-spec-theme');if(t){document.documentElement.setAttribute('data-theme',t);}else if(window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches){document.documentElement.setAttribute('data-theme','dark');}}catch(e){}})();</script>
+</head>
+<body>
+<div class="scrim"></div>
+<div class="layout">
+<aside class="sidebar">
+  <div class="brand">
+    <div class="logo">sd</div>
+    <div class="brand-text">
+      <span class="brand-title">slskd Spec</span>
+      <span class="brand-sub">Soulseek protocol &amp; model</span>
+    </div>
+  </div>
+  <div class="nav-filter-wrap"><input class="nav-filter" type="text" placeholder="Filter pages…" aria-label="Filter pages"></div>
+  <nav>
+  <div class="nav-group-label">Introduction</div>
+  <ul>
+    <li><a href="index.html"><span class="nav-num">1</span><span>Overview</span></a></li>
+    <li><a href="architecture.html"><span class="nav-num">2</span><span>Architecture &amp; Concepts</span></a></li>
+  </ul>
+  <div class="nav-group-label">The Soulseek Network</div>
+  <ul>
+    <li><a href="soulseek-protocol.html"><span class="nav-num">3</span><span>Soulseek Wire Protocol</span></a></li>
+    <li class="active"><a href="data-model.html" aria-current="page"><span class="nav-num">4</span><span>Data Model &amp; Types</span></a></li>
+  </ul>
+  <div class="nav-group-label">Domains</div>
+  <ul>
+    <li><a href="search.html"><span class="nav-num">5</span><span>Search</span></a></li>
+    <li><a href="transfers.html"><span class="nav-num">6</span><span>Transfers &amp; Queueing</span></a></li>
+    <li><a href="users-rooms.html"><span class="nav-num">7</span><span>Users, Rooms &amp; Chat</span></a></li>
+    <li><a href="shares.html"><span class="nav-num">8</span><span>Shares &amp; Browsing</span></a></li>
+  </ul>
+  <div class="nav-group-label">Integration</div>
+  <ul>
+    <li><a href="authentication.html"><span class="nav-num">9</span><span>Authentication &amp; Security</span></a></li>
+    <li><a href="rest-api.html"><span class="nav-num">10</span><span>REST API Reference</span></a></li>
+    <li><a href="realtime-api.html"><span class="nav-num">11</span><span>Real-Time API &amp; Events</span></a></li>
+    <li><a href="relay.html"><span class="nav-num">12</span><span>Relay Protocol</span></a></li>
+  </ul>
+</nav>
+</aside>
+<div class="main-col">
+  <header class="topbar">
+    <button class="menu-btn" aria-label="Toggle navigation">&#9776;</button>
+    <span class="crumb">The Soulseek Network / <b>Data Model &amp; Types</b></span>
+    <span class="spacer"></span>
+    <a class="tb-link" href="index.html#sitemap">Contents</a>
+    <a class="tb-link" href="https://github.com/slskd/slskd" target="_blank" rel="noopener">GitHub</a>
+    <button class="theme-toggle" aria-label="Toggle dark mode" title="Toggle theme">◐</button>
+  </header>
+  <main class="content">
+
+<h1>Data Model &amp; Types</h1>
+<p class="page-lede">This page is the consolidated type catalog for the slskd domain model — every entity and enumeration the slskd HTTP/SignalR API emits, with field tables and representative JSON. It is the canonical reference that the <a href="search.html">Search</a>, <a href="transfers.html">Transfers</a>, <a href="users-rooms.html">Users &amp; Rooms</a> and <a href="shares.html">Shares</a> pages link into. The wire-level encoding of these same concepts (message codes, byte layout, attribute tuples) is covered in <a href="soulseek-protocol.html">Soulseek Wire Protocol</a>; this page describes the decoded, JSON-shaped form.</p>
+
+<div class="note callout"><span class="label">Serialization conventions</span><p>All examples reflect the actual JSON slskd produces. Three rules apply uniformly, configured once in <code>Program.cs</code>:</p>
+<ul>
+<li><strong>camelCase property names.</strong> ASP.NET Core's default <code>JsonNamingPolicy.CamelCase</code> is in effect. A C# property <code>BytesTransferred</code> serializes as <code>bytesTransferred</code>. The slskd web client (<code>src/web/src/lib/*.js</code>) consumes camelCase exclusively, confirming the convention.</li>
+<li><strong>Enums serialize as strings.</strong> A <code>JsonStringEnumConverter</code> is registered for both the REST pipeline and the SignalR JSON protocol. <code>TransferDirection.Download</code> serializes as <code>"Download"</code>, not <code>0</code>. For <span class="type">[Flags]</span> enums (notably <a href="#transferstates"><code>TransferStates</code></a>) combined flags serialize as a comma-separated string, e.g. <code>"Completed, Succeeded"</code>.</li>
+<li><strong>Null properties are omitted.</strong> <code>DefaultIgnoreCondition = WhenWritingNull</code> means a field that is <code>null</code> does not appear in the payload at all. Treat the absence of a key as "null/not provided".</li>
+</ul>
+<p class="src-ref">Source: src/slskd/Program.cs (AddJsonOptions, AddJsonProtocol)</p></div>
+
+<nav class="toc"><div class="toc-title">On this page</div><ul>
+  <li><a href="#file">File</a></li>
+  <li><a href="#file-attributes">File attributes &amp; FileAttributeType</a></li>
+  <li><a href="#directory">Directory</a></li>
+  <li><a href="#response">Response (search response)</a></li>
+  <li><a href="#search">Search</a></li>
+  <li><a href="#user">User</a></li>
+  <li><a href="#user-info">Info (user info)</a></li>
+  <li><a href="#user-status">Status &amp; UserPresence</a></li>
+  <li><a href="#user-statistics">Statistics</a></li>
+  <li><a href="#user-data-response">UserDataResponse</a></li>
+  <li><a href="#room">Room &amp; RoomResponse</a></li>
+  <li><a href="#room-info-response">RoomInfoResponse</a></li>
+  <li><a href="#room-message">RoomMessage &amp; RoomMessageResponse</a></li>
+  <li><a href="#private-message">PrivateMessage</a></li>
+  <li><a href="#conversation">Conversation</a></li>
+  <li><a href="#transfer">Transfer (Download / Upload)</a></li>
+  <li><a href="#transfer-grouping">DirectoryResponse, UserResponse &amp; Batch</a></li>
+  <li><a href="#upload-group">Upload &amp; UploadGroup</a></li>
+  <li><a href="#share">Share, Host &amp; Scan</a></li>
+  <li><a href="#enums">Enumeration reference</a></li>
+</ul></nav>
+
+<h2 id="file">File</h2>
+<p>A <code>File</code> represents one shared file as returned in a search result. slskd defines its own projection (<code>slskd.Search.File</code>) that flattens the audio metadata decoded from the wire-level attribute tuples into discrete, nullable fields. The originating Soulseek.NET <code>File</code> carries a raw <code>attributes</code> collection and <code>attributeCount</code>; slskd's search projection <em>drops</em> those raw fields and keeps only the decoded values.</p>
+
+<div class="note callout"><span class="label">Two flavours of File</span><p>The JSON shape of a file depends on the endpoint:</p><ul>
+<li><strong>Search results</strong> (<a href="#response">Response</a>) embed <code>slskd.Search.File</code> — the decoded form documented below. No <code>attributes[]</code> / <code>attributeCount</code> keys.</li>
+<li><strong>Browse / directory contents</strong> (<a href="#directory">Directory</a>) embed the Soulseek.NET <code>File</code> directly. That object additionally carries <code>attributes</code> (an array of <code>{type, value}</code>) and <code>attributeCount</code> alongside the same decoded <code>bitRate</code>/<code>length</code>/… fields. See <a href="#file-attributes">File attributes</a>.</li>
+</ul></div>
+
+<div class="table-wrap"><table>
+<thead><tr><th>Field</th><th>JSON name</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>Filename</td><td><code>filename</code></td><td><span class="type">string</span></td><td>The full remote filename exactly as it appeared on the wire, including the remote path. Uses the peer's native path separators (typically <code>\</code> on Windows-origin shares).</td></tr>
+<tr><td>Size</td><td><code>size</code></td><td><span class="type">int64</span></td><td>File size in bytes.</td></tr>
+<tr><td>Extension</td><td><code>extension</code></td><td><span class="type">string</span></td><td>The file extension (may be empty). Sent verbatim by the remote peer; not necessarily derivable from the filename.</td></tr>
+<tr><td>Code</td><td><code>code</code></td><td><span class="type">int32</span></td><td>A protocol "file code" field carried in search/browse responses. Conventionally <code>1</code> for a regular file; not otherwise interpreted by slskd.</td></tr>
+<tr><td>BitRate</td><td><code>bitRate</code></td><td><span class="type">int32?</span></td><td>Decoded bit rate in kbps, if the peer supplied a <code>BitRate</code> attribute. Omitted when null.</td></tr>
+<tr><td>Length</td><td><code>length</code></td><td><span class="type">int32?</span></td><td>Decoded duration in <em>seconds</em>, if a <code>Length</code> attribute was supplied. Omitted when null.</td></tr>
+<tr><td>SampleRate</td><td><code>sampleRate</code></td><td><span class="type">int32?</span></td><td>Decoded sample rate in Hz (e.g. <code>44100</code>), if a <code>SampleRate</code> attribute was supplied. Omitted when null.</td></tr>
+<tr><td>BitDepth</td><td><code>bitDepth</code></td><td><span class="type">int32?</span></td><td>Decoded bit depth in bits (e.g. <code>16</code>, <code>24</code>), if a <code>BitDepth</code> attribute was supplied. Omitted when null.</td></tr>
+<tr><td>IsVariableBitRate</td><td><code>isVariableBitRate</code></td><td><span class="type">bool?</span></td><td>VBR flag, decoded from the <code>VariableBitRate</code> attribute (<code>true</code> = VBR, <code>false</code> = CBR). Omitted when the attribute is absent.</td></tr>
+<tr><td>IsLocked</td><td><code>isLocked</code></td><td><span class="type">bool</span></td><td>Whether this file is "locked" — i.e. shared but restricted by the remote peer (see <a href="#response">Response</a>). Note: in a <a href="#response">Response</a>, locked files are also segregated into <code>lockedFiles[]</code>; this per-file flag exists on the type but the segregation by collection is the primary signal.</td></tr>
+</tbody>
+</table></div>
+
+<p>Presence/absence of the decoded audio fields is the canonical way to distinguish lossy from lossless results. The web client treats a file as <em>lossless</em> when both <code>sampleRate</code> and <code>bitDepth</code> are present, and as <em>lossy</em> otherwise.</p>
+
+<pre><code>{
+  "filename": "@@abcde\\Music\\Artist\\Album\\01 - Track.flac",
+  "size": 31457280,
+  "extension": "flac",
+  "code": 1,
+  "sampleRate": 44100,
+  "bitDepth": 16,
+  "isLocked": false
+}</code></pre>
+
+<p>A lossy (MP3) result, where bit-rate fields are present and the lossless fields are absent:</p>
+<pre><code>{
+  "filename": "@@abcde\\Music\\Artist\\Album\\01 - Track.mp3",
+  "size": 8388608,
+  "extension": "mp3",
+  "code": 1,
+  "bitRate": 320,
+  "length": 214,
+  "isVariableBitRate": false,
+  "isLocked": false
+}</code></pre>
+<p class="src-ref">Source: src/slskd/Search/Types/File.cs; Soulseek.NET 10.0.1 src/File.cs; src/web/src/lib/searches.js, util.js</p>
+
+<h2 id="file-attributes">File attributes &amp; FileAttributeType</h2>
+<p>On the wire, audio metadata is not a set of named fields — it is a list of <code>(type, value)</code> integer tuples appended to each file entry (see <a href="soulseek-protocol.html#file-attributes">Soulseek Wire Protocol → File attributes</a>). Each tuple is a <code>FileAttribute</code>: a <code>type</code> drawn from the <code>FileAttributeType</code> enum and an <span class="type">int32</span> <code>value</code>. Soulseek.NET decodes these into the discrete <code>bitRate</code>/<code>length</code>/<code>sampleRate</code>/<code>bitDepth</code>/<code>isVariableBitRate</code> fields; slskd's search projection keeps only the decoded form, while browse responses expose both.</p>
+
+<div class="table-wrap"><table>
+<thead><tr><th>FileAttribute field</th><th>JSON name</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>Type</td><td><code>type</code></td><td><span class="type">FileAttributeType</span></td><td>The attribute kind (serialized as a string, e.g. <code>"BitRate"</code>).</td></tr>
+<tr><td>Value</td><td><code>value</code></td><td><span class="type">int32</span></td><td>The attribute's numeric value, interpreted per its type.</td></tr>
+</tbody>
+</table></div>
+
+<div class="table-wrap"><table>
+<thead><tr><th>FileAttributeType member</th><th>Wire value</th><th>Unit / meaning</th><th>Decodes to</th></tr></thead>
+<tbody>
+<tr><td><code>BitRate</code></td><td><span class="type">0</span></td><td>Bit rate, in kbps.</td><td><code>bitRate</code></td></tr>
+<tr><td><code>Length</code></td><td><span class="type">1</span></td><td>Length, in seconds.</td><td><code>length</code></td></tr>
+<tr><td><code>VariableBitRate</code></td><td><span class="type">2</span></td><td>VBR flag; <code>0</code> = constant (CBR), <code>1</code> = variable (VBR).</td><td><code>isVariableBitRate</code></td></tr>
+<tr><td><code>SampleRate</code></td><td><span class="type">4</span></td><td>Sample rate, in Hz.</td><td><code>sampleRate</code></td></tr>
+<tr><td><code>BitDepth</code></td><td><span class="type">5</span></td><td>Bit depth, in bits.</td><td><code>bitDepth</code></td></tr>
+</tbody>
+</table></div>
+
+<div class="note callout tip"><span class="label">Note</span><p>The wire value <code>3</code> is unassigned in <code>FileAttributeType</code> (values skip from 2 to 4). The decoded fields exposed by slskd are derived by Soulseek.NET; there is no field-level guarantee that a peer sends a complete or consistent attribute set — clients should treat every decoded audio field as optional.</p></div>
+
+<p>A browse-response file, which exposes the raw attribute tuples in addition to the decoded fields:</p>
+<pre><code>{
+  "filename": "Album\\01 - Track.mp3",
+  "size": 8388608,
+  "extension": "mp3",
+  "code": 1,
+  "attributeCount": 3,
+  "attributes": [
+    { "type": "BitRate", "value": 320 },
+    { "type": "Length", "value": 214 },
+    { "type": "VariableBitRate", "value": 0 }
+  ],
+  "bitRate": 320,
+  "length": 214,
+  "isVariableBitRate": false
+}</code></pre>
+<p class="src-ref">Source: Soulseek.NET 10.0.1 src/FileAttribute.cs, src/FileAttributeType.cs, src/File.cs</p>
+
+<h2 id="directory">Directory</h2>
+<p>A <code>Directory</code> is a folder of files, used for browse responses and directory-contents responses. slskd returns the Soulseek.NET <code>Directory</code> type verbatim (no slskd projection), so the embedded files carry the raw <a href="#file-attributes">attribute tuples</a> as well as decoded fields. A browse response is an array of these.</p>
+
+<div class="table-wrap"><table>
+<thead><tr><th>Field</th><th>JSON name</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>Name</td><td><code>name</code></td><td><span class="type">string</span></td><td>The directory name (a remote path, peer-native separators).</td></tr>
+<tr><td>FileCount</td><td><code>fileCount</code></td><td><span class="type">int32</span></td><td>Number of files in the directory.</td></tr>
+<tr><td>Files</td><td><code>files</code></td><td><span class="type">File[]</span></td><td>The files contained within the directory (Soulseek.NET <code>File</code> shape — see <a href="#file-attributes">attributes note</a>).</td></tr>
+</tbody>
+</table></div>
+
+<pre><code>[
+  {
+    "name": "@@abcde\\Music\\Artist\\Album",
+    "fileCount": 2,
+    "files": [
+      { "filename": "01 - Track.flac", "size": 31457280, "code": 1, "attributeCount": 2,
+        "attributes": [ { "type": "SampleRate", "value": 44100 }, { "type": "BitDepth", "value": 16 } ],
+        "sampleRate": 44100, "bitDepth": 16 },
+      { "filename": "02 - Track.flac", "size": 28311552, "code": 1, "attributeCount": 0, "attributes": [] }
+    ]
+  }
+]</code></pre>
+<p class="src-ref">Source: src/slskd/Users/API/Controllers/UsersController.cs (BrowseAsync, GetDirectoryContentsAsync return <code>IEnumerable&lt;Directory&gt;</code>); Soulseek.NET 10.0.1 src/Directory.cs</p>
+
+<h2 id="response">Response <span class="type">(search response)</span></h2>
+<p>A <code>Response</code> (<code>slskd.Search.Response</code>, projected from Soulseek.NET <code>SearchResponse</code>) is one peer's answer to a search. A <a href="#search">Search</a> aggregates many of these. The token correlates the response to the originating search request.</p>
+
+<div class="note callout"><span class="label">Locked files</span><p>"Locked" files are files the responding peer shares but restricts — typically files placed behind privilege, private-share, or per-user permission rules on the remote side. The peer reports them separately so the requester knows they exist but cannot freely download them. slskd surfaces them in a distinct <code>lockedFiles[]</code> collection with its own <code>lockedFileCount</code>; ordinary, freely-downloadable files are in <code>files[]</code> / <code>fileCount</code>.</p></div>
+
+<div class="table-wrap"><table>
+<thead><tr><th>Field</th><th>JSON name</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>Username</td><td><code>username</code></td><td><span class="type">string</span></td><td>The responding peer's username.</td></tr>
+<tr><td>Token</td><td><code>token</code></td><td><span class="type">int32</span></td><td>The search token echoed by the peer, correlating this response to the request.</td></tr>
+<tr><td>HasFreeUploadSlot</td><td><code>hasFreeUploadSlot</code></td><td><span class="type">bool</span></td><td>Whether the peer reports a free upload slot at response time.</td></tr>
+<tr><td>UploadSpeed</td><td><code>uploadSpeed</code></td><td><span class="type">int32</span></td><td>The peer's reported average upload speed (bytes/sec).</td></tr>
+<tr><td>QueueLength</td><td><code>queueLength</code></td><td><span class="type">int64</span></td><td>The peer's reported upload queue length.</td></tr>
+<tr><td>FileCount</td><td><code>fileCount</code></td><td><span class="type">int32</span></td><td>Number of unlocked files in <code>files</code>.</td></tr>
+<tr><td>Files</td><td><code>files</code></td><td><span class="type">File[]</span></td><td>The unlocked (freely downloadable) result files.</td></tr>
+<tr><td>LockedFileCount</td><td><code>lockedFileCount</code></td><td><span class="type">int32</span></td><td>Number of locked files in <code>lockedFiles</code>.</td></tr>
+<tr><td>LockedFiles</td><td><code>lockedFiles</code></td><td><span class="type">File[]</span></td><td>The locked (restricted) result files.</td></tr>
+</tbody>
+</table></div>
+
+<pre><code>{
+  "username": "remote_peer",
+  "token": 1827361,
+  "hasFreeUploadSlot": true,
+  "uploadSpeed": 524288,
+  "queueLength": 0,
+  "fileCount": 2,
+  "files": [
+    { "filename": "Album\\01.mp3", "size": 8388608, "code": 1, "bitRate": 320, "length": 214, "isLocked": false },
+    { "filename": "Album\\02.mp3", "size": 7340032, "code": 1, "bitRate": 320, "length": 187, "isLocked": false }
+  ],
+  "lockedFileCount": 0,
+  "lockedFiles": []
+}</code></pre>
+<p class="src-ref">Source: src/slskd/Search/Types/Response.cs</p>
+
+<h2 id="search">Search</h2>
+<p>A <code>Search</code> is the persisted aggregate of a search request and its responses. It is an EF Core entity (the <code>responses</code> are stored as a serialized JSON column and are only included when explicitly requested via <code>?includeResponses=true</code> on the status endpoint). <code>isComplete</code> is a derived, non-stored property: <code>true</code> when the <code>state</code> includes the <code>Completed</code> flag.</p>
+
+<div class="table-wrap"><table>
+<thead><tr><th>Field</th><th>JSON name</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>Id</td><td><code>id</code></td><td><span class="type">Guid</span></td><td>Unique identifier for the search (primary key). Client may supply this on creation.</td></tr>
+<tr><td>SearchText</td><td><code>searchText</code></td><td><span class="type">string</span></td><td>The query string sent to the network.</td></tr>
+<tr><td>Token</td><td><code>token</code></td><td><span class="type">int32</span></td><td>The protocol token used to correlate incoming responses.</td></tr>
+<tr><td>State</td><td><code>state</code></td><td><span class="type">SearchStates</span></td><td>Lifecycle state (string, possibly comma-joined flags), e.g. <code>"InProgress"</code> or <code>"Completed, TimedOut"</code>. See <a href="#searchstates">SearchStates</a>.</td></tr>
+<tr><td>FileCount</td><td><code>fileCount</code></td><td><span class="type">int32</span></td><td>Total unlocked files across all responses.</td></tr>
+<tr><td>LockedFileCount</td><td><code>lockedFileCount</code></td><td><span class="type">int32</span></td><td>Total locked files across all responses.</td></tr>
+<tr><td>ResponseCount</td><td><code>responseCount</code></td><td><span class="type">int32</span></td><td>Number of peer responses received.</td></tr>
+<tr><td>StartedAt</td><td><code>startedAt</code></td><td><span class="type">DateTime</span></td><td>When the search was started (ISO-8601).</td></tr>
+<tr><td>EndedAt</td><td><code>endedAt</code></td><td><span class="type">DateTime?</span></td><td>When the search ended, or omitted if still running.</td></tr>
+<tr><td>IsComplete</td><td><code>isComplete</code></td><td><span class="type">bool</span></td><td>Derived: <code>true</code> when <code>state</code> has the <code>Completed</code> flag. Not stored.</td></tr>
+<tr><td>Responses</td><td><code>responses</code></td><td><span class="type">Response[]</span></td><td>The peer <a href="#response">responses</a>. Included only when requested (e.g. <code>includeResponses=true</code>); otherwise an empty array.</td></tr>
+</tbody>
+</table></div>
+
+<pre><code>{
+  "id": "8f4c1f2e-7b3a-4d11-9c2e-2a4b6c8d0e10",
+  "searchText": "artist album flac",
+  "token": 1827361,
+  "state": "Completed, TimedOut",
+  "fileCount": 142,
+  "lockedFileCount": 3,
+  "responseCount": 21,
+  "startedAt": "2026-06-16T18:04:11.512Z",
+  "endedAt": "2026-06-16T18:04:26.880Z",
+  "isComplete": true,
+  "responses": []
+}</code></pre>
+<p class="src-ref">Source: src/slskd/Search/Types/Search.cs; src/web/src/lib/searches.js</p>
+
+<h2 id="user">User</h2>
+<p>The <code>User</code> aggregate (<code>slskd.Users.User</code>) bundles a user's configured group, statistics and status. It is the shape returned when slskd composes a full user record from server-tracked data.</p>
+
+<div class="table-wrap"><table>
+<thead><tr><th>Field</th><th>JSON name</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>Username</td><td><code>username</code></td><td><span class="type">string</span></td><td>The user's username.</td></tr>
+<tr><td>Group</td><td><code>group</code></td><td><span class="type">string</span></td><td>The user's <em>configured</em> group (the group under which the username appears in config), not the group derived at runtime.</td></tr>
+<tr><td>Statistics</td><td><code>statistics</code></td><td><span class="type">Statistics</span></td><td>The user's <a href="#user-statistics">statistics</a>.</td></tr>
+<tr><td>Status</td><td><code>status</code></td><td><span class="type">Status</span></td><td>The user's <a href="#user-status">status</a> (presence + privileged).</td></tr>
+</tbody>
+</table></div>
+
+<pre><code>{
+  "username": "remote_peer",
+  "group": "default",
+  "statistics": { "averageSpeed": 524288, "directoryCount": 412, "fileCount": 9123, "uploadCount": 18234 },
+  "status": { "isPrivileged": false, "presence": "Online" }
+}</code></pre>
+<p class="src-ref">Source: src/slskd/Users/Types/User.cs</p>
+
+<h2 id="user-info">Info <span class="type">(user info)</span></h2>
+<p><code>Info</code> (<code>slskd.Users.Info</code>) is the peer-to-peer "user info" record — free-text description, optional picture, and upload-availability hints, fetched directly from the remote peer rather than the server.</p>
+
+<div class="table-wrap"><table>
+<thead><tr><th>Field</th><th>JSON name</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>Description</td><td><code>description</code></td><td><span class="type">string</span></td><td>The user's free-text profile description.</td></tr>
+<tr><td>HasPicture</td><td><code>hasPicture</code></td><td><span class="type">bool</span></td><td>Whether the user supplied a profile picture.</td></tr>
+<tr><td>Picture</td><td><code>picture</code></td><td><span class="type">byte[]</span></td><td>The raw picture bytes (Base64-encoded in JSON), if any.</td></tr>
+<tr><td>UploadSlots</td><td><code>uploadSlots</code></td><td><span class="type">int32</span></td><td>The user's total configured upload slots.</td></tr>
+<tr><td>QueueLength</td><td><code>queueLength</code></td><td><span class="type">int32</span></td><td>The user's current upload queue length.</td></tr>
+<tr><td>HasFreeUploadSlot</td><td><code>hasFreeUploadSlot</code></td><td><span class="type">bool</span></td><td>Whether the user currently has a free upload slot.</td></tr>
+</tbody>
+</table></div>
+
+<pre><code>{
+  "description": "Sharing my FLAC collection. Be patient with the queue.",
+  "hasPicture": false,
+  "uploadSlots": 2,
+  "queueLength": 5,
+  "hasFreeUploadSlot": false
+}</code></pre>
+<p class="src-ref">Source: src/slskd/Users/Types/Info.cs</p>
+
+<h2 id="user-status">Status &amp; UserPresence</h2>
+<p><code>Status</code> (<code>slskd.Users.Status</code>) reports a user's presence and privileged flag.</p>
+
+<div class="table-wrap"><table>
+<thead><tr><th>Field</th><th>JSON name</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>Presence</td><td><code>presence</code></td><td><span class="type">UserPresence</span></td><td>The user's presence, as a string: <code>"Offline"</code>, <code>"Away"</code> or <code>"Online"</code>.</td></tr>
+<tr><td>IsPrivileged</td><td><code>isPrivileged</code></td><td><span class="type">bool</span></td><td>Whether the user holds Soulseek privileges (donor status).</td></tr>
+</tbody>
+</table></div>
+
+<p><strong><code>UserPresence</code></strong> is a Soulseek-origin enum. The underlying server protocol uses the integer values; slskd serializes the name.</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Member</th><th>Value</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>Offline</code></td><td><span class="type">0</span></td><td>Offline.</td></tr>
+<tr><td><code>Away</code></td><td><span class="type">1</span></td><td>Away (idle).</td></tr>
+<tr><td><code>Online</code></td><td><span class="type">2</span></td><td>Online.</td></tr>
+</tbody>
+</table></div>
+
+<pre><code>{ "isPrivileged": false, "presence": "Online" }</code></pre>
+<p class="src-ref">Source: src/slskd/Users/Types/Status.cs; Soulseek.NET 10.0.1 src/UserPresence.cs</p>
+
+<h2 id="user-statistics">Statistics</h2>
+<p><code>Statistics</code> (<code>slskd.Users.Statistics</code>) holds the server-tracked aggregate counters for a user.</p>
+
+<div class="table-wrap"><table>
+<thead><tr><th>Field</th><th>JSON name</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>AverageSpeed</td><td><code>averageSpeed</code></td><td><span class="type">int32</span></td><td>The user's average upload speed (bytes/sec) as tracked by the server.</td></tr>
+<tr><td>DirectoryCount</td><td><code>directoryCount</code></td><td><span class="type">int32</span></td><td>Number of directories the user shares.</td></tr>
+<tr><td>FileCount</td><td><code>fileCount</code></td><td><span class="type">int32</span></td><td>Number of files the user shares.</td></tr>
+<tr><td>UploadCount</td><td><code>uploadCount</code></td><td><span class="type">int64</span></td><td>Number of uploads the server has tracked for this user.</td></tr>
+</tbody>
+</table></div>
+<p class="src-ref">Source: src/slskd/Users/Types/Statistics.cs</p>
+
+<h2 id="user-data-response">UserDataResponse</h2>
+<p><code>UserDataResponse</code> is the API DTO projected from the Soulseek.NET <code>UserData</code> server record. Two structurally identical copies exist (<code>slskd.Users.API.UserDataResponse</code> and <code>slskd.Messaging.API.UserDataResponse</code>); the messaging copy is used to describe the occupants of a <a href="#room">Room</a>. It differs from <a href="#user-statistics">Statistics</a> by including the country code, free-slot count, presence, and a <code>self</code> marker.</p>
+
+<div class="table-wrap"><table>
+<thead><tr><th>Field</th><th>JSON name</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>Username</td><td><code>username</code></td><td><span class="type">string</span></td><td>The user's username.</td></tr>
+<tr><td>AverageSpeed</td><td><code>averageSpeed</code></td><td><span class="type">int32</span></td><td>Average upload speed (bytes/sec).</td></tr>
+<tr><td>UploadCount</td><td><code>uploadCount</code></td><td><span class="type">int64</span></td><td>Server-tracked upload count.</td></tr>
+<tr><td>FileCount</td><td><code>fileCount</code></td><td><span class="type">int32</span></td><td>Number of files shared.</td></tr>
+<tr><td>DirectoryCount</td><td><code>directoryCount</code></td><td><span class="type">int32</span></td><td>Number of directories shared.</td></tr>
+<tr><td>Status</td><td><code>status</code></td><td><span class="type">UserPresence</span></td><td>Presence, as a string (<code>"Offline"</code>/<code>"Away"</code>/<code>"Online"</code>).</td></tr>
+<tr><td>CountryCode</td><td><code>countryCode</code></td><td><span class="type">string</span></td><td>The user's country code if the server provided one; omitted when null.</td></tr>
+<tr><td>SlotsFree</td><td><code>slotsFree</code></td><td><span class="type">int32?</span></td><td>Number of free download slots, if provided; omitted when null.</td></tr>
+<tr><td>Self</td><td><code>self</code></td><td><span class="type">bool?</span></td><td><code>true</code> only when this record belongs to the currently logged-in user. Omitted (null) otherwise — never serialized as <code>false</code>.</td></tr>
+</tbody>
+</table></div>
+
+<pre><code>{
+  "username": "remote_peer",
+  "averageSpeed": 524288,
+  "uploadCount": 18234,
+  "fileCount": 9123,
+  "directoryCount": 412,
+  "status": "Online",
+  "countryCode": "US",
+  "slotsFree": 1
+}</code></pre>
+<p class="src-ref">Source: src/slskd/Users/API/DTO/UserDataResponse.cs; src/slskd/Messaging/API/DTO/UserDataResponse.cs; Soulseek.NET 10.0.1 src/UserData.cs</p>
+
+<h2 id="room">Room &amp; RoomResponse</h2>
+<p>A <code>Room</code> (<code>slskd.Messaging.Room</code>) models a chat room. The API DTO <code>RoomResponse</code> projects it for transport, replacing the internal <code>UserData</code>/<code>RoomMessage</code> types with their <code>…Response</code> DTOs. Fields marked "private only" are populated only for private rooms.</p>
+
+<div class="table-wrap"><table>
+<thead><tr><th>Field</th><th>JSON name</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>Name</td><td><code>name</code></td><td><span class="type">string</span></td><td>The room name.</td></tr>
+<tr><td>IsPrivate</td><td><code>isPrivate</code></td><td><span class="type">bool</span></td><td>Whether the room is private.</td></tr>
+<tr><td>OperatorCount</td><td><code>operatorCount</code></td><td><span class="type">int32?</span></td><td>Number of operators (private only; omitted otherwise).</td></tr>
+<tr><td>Operators</td><td><code>operators</code></td><td><span class="type">string[]</span></td><td>Operator usernames (private only; omitted otherwise).</td></tr>
+<tr><td>Owner</td><td><code>owner</code></td><td><span class="type">string</span></td><td>Owner username (private only; omitted otherwise).</td></tr>
+<tr><td>Users</td><td><code>users</code></td><td><span class="type">UserDataResponse[]</span></td><td>The users currently in the room.</td></tr>
+<tr><td>Messages</td><td><code>messages</code></td><td><span class="type">RoomMessageResponse[]</span></td><td>The room message history held by slskd.</td></tr>
+</tbody>
+</table></div>
+
+<div class="note callout"><span class="label">Note</span><p>The internal <code>Room</code> type's <code>Users</code> are typed as Soulseek.NET <code>UserData</code> and its <code>Messages</code> as <code>RoomMessage</code>; the transport <code>RoomResponse</code> swaps these for <a href="#user-data-response">UserDataResponse</a> and <a href="#room-message">RoomMessageResponse</a>. Treat <code>RoomResponse</code> as the API-facing shape.</p></div>
+
+<pre><code>{
+  "name": "nicotine",
+  "isPrivate": false,
+  "users": [
+    { "username": "alice", "averageSpeed": 131072, "fileCount": 2200, "directoryCount": 80, "status": "Online" }
+  ],
+  "messages": [
+    { "timestamp": "2026-06-16T18:10:00Z", "username": "alice", "message": "hi", "roomName": "nicotine" }
+  ]
+}</code></pre>
+<p class="src-ref">Source: src/slskd/Messaging/Types/Room.cs; src/slskd/Messaging/API/DTO/RoomResponse.cs</p>
+
+<h2 id="room-info-response">RoomInfoResponse</h2>
+<p><code>RoomInfoResponse</code> is the lightweight directory-listing form of a room (e.g. the result of listing available rooms), without user lists or messages.</p>
+
+<div class="table-wrap"><table>
+<thead><tr><th>Field</th><th>JSON name</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>Name</td><td><code>name</code></td><td><span class="type">string</span></td><td>The room name.</td></tr>
+<tr><td>UserCount</td><td><code>userCount</code></td><td><span class="type">int32</span></td><td>Number of users in the room.</td></tr>
+<tr><td>IsPrivate</td><td><code>isPrivate</code></td><td><span class="type">bool</span></td><td>Whether the room is private.</td></tr>
+<tr><td>IsOwned</td><td><code>isOwned</code></td><td><span class="type">bool</span></td><td>Whether the currently logged-in user owns the room.</td></tr>
+<tr><td>IsModerated</td><td><code>isModerated</code></td><td><span class="type">bool</span></td><td>Whether the currently logged-in user moderates the room.</td></tr>
+</tbody>
+</table></div>
+
+<pre><code>{ "name": "nicotine", "userCount": 312, "isPrivate": false, "isOwned": false, "isModerated": false }</code></pre>
+<p class="src-ref">Source: src/slskd/Messaging/API/DTO/RoomInfoResponse.cs</p>
+
+<h2 id="room-message">RoomMessage &amp; RoomMessageResponse</h2>
+<p>A <code>RoomMessage</code> (<code>slskd.Messaging.RoomMessage</code>) is a single message in a room. The transport DTO <code>RoomMessageResponse</code> drops the internal <code>direction</code> field and adds a <code>self</code> marker.</p>
+
+<div class="table-wrap"><table>
+<thead><tr><th>Field</th><th>JSON name</th><th>Type</th><th>In <code>RoomMessage</code></th><th>In <code>RoomMessageResponse</code></th></tr></thead>
+<tbody>
+<tr><td>Timestamp</td><td><code>timestamp</code></td><td><span class="type">DateTime</span></td><td>Yes</td><td>Yes</td></tr>
+<tr><td>Username</td><td><code>username</code></td><td><span class="type">string</span></td><td>Yes</td><td>Yes</td></tr>
+<tr><td>Message</td><td><code>message</code></td><td><span class="type">string</span></td><td>Yes</td><td>Yes</td></tr>
+<tr><td>RoomName</td><td><code>roomName</code></td><td><span class="type">string</span></td><td>Yes</td><td>Yes</td></tr>
+<tr><td>Direction</td><td><code>direction</code></td><td><span class="type">MessageDirection</span></td><td>Yes (<code>"In"</code>/<code>"Out"</code>)</td><td>—</td></tr>
+<tr><td>Self</td><td><code>self</code></td><td><span class="type">bool?</span></td><td>—</td><td>Yes (<code>true</code> only when the message is the logged-in user's own; omitted otherwise)</td></tr>
+</tbody>
+</table></div>
+
+<pre><code>{
+  "timestamp": "2026-06-16T18:10:00Z",
+  "username": "alice",
+  "message": "hello room",
+  "roomName": "nicotine"
+}</code></pre>
+<p class="src-ref">Source: src/slskd/Messaging/Types/RoomMessage.cs; src/slskd/Messaging/API/DTO/RoomMessageResponse.cs</p>
+
+<h2 id="private-message">PrivateMessage</h2>
+<p>A <code>PrivateMessage</code> (<code>slskd.Messaging.PrivateMessage</code>) is a one-to-one chat message. Each carries a server-assigned <code>id</code> used to acknowledge receipt, a <code>direction</code> (<code>"In"</code> for received, <code>"Out"</code> for sent), and flags for acknowledgement and server replay.</p>
+
+<div class="table-wrap"><table>
+<thead><tr><th>Field</th><th>JSON name</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>Id</td><td><code>id</code></td><td><span class="type">int32</span></td><td>Unique message id, used to acknowledge receipt to the server.</td></tr>
+<tr><td>Timestamp</td><td><code>timestamp</code></td><td><span class="type">DateTime</span></td><td>UTC timestamp of the message.</td></tr>
+<tr><td>Username</td><td><code>username</code></td><td><span class="type">string</span></td><td>The remote user's username.</td></tr>
+<tr><td>Direction</td><td><code>direction</code></td><td><span class="type">MessageDirection</span></td><td><code>"In"</code> (received) or <code>"Out"</code> (sent).</td></tr>
+<tr><td>Message</td><td><code>message</code></td><td><span class="type">string</span></td><td>The message text.</td></tr>
+<tr><td>IsAcknowledged</td><td><code>isAcknowledged</code></td><td><span class="type">bool</span></td><td>Whether the message has been acknowledged. Defaults <code>false</code>.</td></tr>
+<tr><td>WasReplayed</td><td><code>wasReplayed</code></td><td><span class="type">bool</span></td><td>Whether the message was replayed by the server (offline delivery). Defaults <code>false</code>.</td></tr>
+</tbody>
+</table></div>
+
+<pre><code>{
+  "id": 41234,
+  "timestamp": "2026-06-16T18:12:30Z",
+  "username": "alice",
+  "direction": "In",
+  "message": "are you still sharing the album?",
+  "isAcknowledged": false,
+  "wasReplayed": false
+}</code></pre>
+<p class="src-ref">Source: src/slskd/Messaging/Types/PrivateMessage.cs</p>
+
+<h2 id="conversation">Conversation</h2>
+<p>A <code>Conversation</code> (<code>slskd.Messaging.Conversation</code>) groups the private-message history with a single user, plus unread tracking. <code>hasUnAcknowledgedMessages</code> is derived (<code>unAcknowledgedMessageCount &gt; 0</code>).</p>
+
+<div class="table-wrap"><table>
+<thead><tr><th>Field</th><th>JSON name</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>Username</td><td><code>username</code></td><td><span class="type">string</span></td><td>The other party's username.</td></tr>
+<tr><td>IsActive</td><td><code>isActive</code></td><td><span class="type">bool</span></td><td>Whether the conversation is active. Defaults <code>true</code>.</td></tr>
+<tr><td>UnAcknowledgedMessageCount</td><td><code>unAcknowledgedMessageCount</code></td><td><span class="type">int32</span></td><td>Number of unacknowledged (unread) messages.</td></tr>
+<tr><td>HasUnAcknowledgedMessages</td><td><code>hasUnAcknowledgedMessages</code></td><td><span class="type">bool</span></td><td>Derived: <code>true</code> when the count is &gt; 0.</td></tr>
+<tr><td>Messages</td><td><code>messages</code></td><td><span class="type">PrivateMessage[]</span></td><td>The message history (may be omitted in summary listings).</td></tr>
+</tbody>
+</table></div>
+
+<pre><code>{
+  "username": "alice",
+  "isActive": true,
+  "unAcknowledgedMessageCount": 2,
+  "hasUnAcknowledgedMessages": true,
+  "messages": [ /* PrivateMessage[] */ ]
+}</code></pre>
+<p class="src-ref">Source: src/slskd/Messaging/Types/Conversation.cs</p>
+
+<h2 id="transfer">Transfer <span class="type">(Download / Upload)</span></h2>
+<p>A <code>Transfer</code> (<code>slskd.Transfers.Transfer</code>) is the single, unified record for both downloads and uploads; the <code>direction</code> field disambiguates. Several fields are computed (<code>[NotMapped]</code>) and serialized but never stored: <code>bytesRemaining</code>, <code>percentComplete</code>, <code>elapsedTime</code>, <code>remainingTime</code>. The brief's <code>startOffset</code> appears in the API <em>request</em> negotiation and on the wire (see <a href="soulseek-protocol.html#transfer-negotiation">Transfer negotiation</a>); on the persisted <code>Transfer</code> record the resume offset is reflected through <code>bytesTransferred</code> rather than a separate field.</p>
+
+<div class="table-wrap"><table>
+<thead><tr><th>Field</th><th>JSON name</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>Id</td><td><code>id</code></td><td><span class="type">Guid</span></td><td>Unique identifier for the transfer (primary key).</td></tr>
+<tr><td>BatchId</td><td><code>batchId</code></td><td><span class="type">Guid?</span></td><td>The associated <a href="#transfer-grouping">Batch</a> id, if the transfer was enqueued as part of a batch; omitted otherwise.</td></tr>
+<tr><td>Username</td><td><code>username</code></td><td><span class="type">string</span></td><td>The remote peer's username.</td></tr>
+<tr><td>Direction</td><td><code>direction</code></td><td><span class="type">TransferDirection</span></td><td><span class="badge dir">Download</span> or <span class="badge dir">Upload</span> (string).</td></tr>
+<tr><td>Filename</td><td><code>filename</code></td><td><span class="type">string</span></td><td>The remote filename, exactly as it appeared in the originating search/browse/directory response.</td></tr>
+<tr><td>Size</td><td><code>size</code></td><td><span class="type">int64</span></td><td>The remote file size in bytes.</td></tr>
+<tr><td>State</td><td><code>state</code></td><td><span class="type">TransferStates</span></td><td>The lifecycle state — a flags string, e.g. <code>"Queued, Remotely"</code> or <code>"Completed, Succeeded"</code>. See <a href="#transferstates">TransferStates</a>.</td></tr>
+<tr><td>RequestedAt</td><td><code>requestedAt</code></td><td><span class="type">DateTime</span></td><td>When the transfer was requested from the peer.</td></tr>
+<tr><td>EnqueuedAt</td><td><code>enqueuedAt</code></td><td><span class="type">DateTime?</span></td><td>When enqueued. For downloads: when the peer accepted the enqueue. For uploads: when made available for scheduling. Omitted if not yet enqueued.</td></tr>
+<tr><td>StartedAt</td><td><code>startedAt</code></td><td><span class="type">DateTime?</span></td><td>When the data connection was established and transfer began; omitted if not started.</td></tr>
+<tr><td>EndedAt</td><td><code>endedAt</code></td><td><span class="type">DateTime?</span></td><td>When the transfer ended; omitted while running. Guaranteed set for terminal states.</td></tr>
+<tr><td>BytesTransferred</td><td><code>bytesTransferred</code></td><td><span class="type">int64</span></td><td>Bytes transferred so far (includes any resumed prefix).</td></tr>
+<tr><td>AverageSpeed</td><td><code>averageSpeed</code></td><td><span class="type">double</span></td><td>Average speed over the duration (bytes/sec).</td></tr>
+<tr><td>PlaceInQueue</td><td><code>placeInQueue</code></td><td><span class="type">int32?</span></td><td>Current place in the peer's queue, if requested. May be inaccurate; omitted if unknown.</td></tr>
+<tr><td>Exception</td><td><code>exception</code></td><td><span class="type">string</span></td><td>The error text if the transfer failed; omitted on success / while running.</td></tr>
+<tr><td>Attempts</td><td><code>attempts</code></td><td><span class="type">int32</span></td><td>Retry count (downloads only). Incremented on each retry.</td></tr>
+<tr><td>NextAttemptAt</td><td><code>nextAttemptAt</code></td><td><span class="type">DateTime?</span></td><td>When the next retry will occur, if scheduled; omitted otherwise.</td></tr>
+<tr><td>Removed</td><td><code>removed</code></td><td><span class="type">bool</span></td><td>Whether the transfer has been removed from the UI (soft-delete).</td></tr>
+<tr><td>BytesRemaining</td><td><code>bytesRemaining</code></td><td><span class="type">int64</span></td><td>Derived: <code>size - bytesTransferred</code>. Not stored.</td></tr>
+<tr><td>PercentComplete</td><td><code>percentComplete</code></td><td><span class="type">double</span></td><td>Derived: <code>0</code> when size is 0, else <code>bytesTransferred / size * 100</code>. Not stored.</td></tr>
+<tr><td>ElapsedTime</td><td><code>elapsedTime</code></td><td><span class="type">TimeSpan?</span></td><td>Derived elapsed time; null until started. Not stored.</td></tr>
+<tr><td>RemainingTime</td><td><code>remainingTime</code></td><td><span class="type">TimeSpan?</span></td><td>Derived ETA from average speed; null when speed is 0. Not stored.</td></tr>
+</tbody>
+</table></div>
+
+<div class="note callout warn"><span class="label">Direction note</span><p>"Download" and "Upload" are not separate types — they are the same <code>Transfer</code> shape distinguished by <code>direction</code>, and are listed via direction-scoped endpoints (the web client calls <code>/transfers/{direction}s</code>). The <code>attempts</code> / <code>nextAttemptAt</code> retry fields are meaningful only for downloads.</p></div>
+
+<pre><code>{
+  "id": "2c9e7a40-1b6f-4f2a-bb12-7e0d9c3a55aa",
+  "username": "remote_peer",
+  "direction": "Download",
+  "filename": "@@abcde\\Music\\Artist\\Album\\01 - Track.flac",
+  "size": 31457280,
+  "state": "InProgress",
+  "requestedAt": "2026-06-16T18:20:00Z",
+  "enqueuedAt": "2026-06-16T18:20:01Z",
+  "startedAt": "2026-06-16T18:20:03Z",
+  "bytesTransferred": 10485760,
+  "averageSpeed": 1048576,
+  "placeInQueue": 0,
+  "attempts": 1,
+  "removed": false,
+  "bytesRemaining": 20971520,
+  "percentComplete": 33.33333333333333,
+  "elapsedTime": "00:00:10",
+  "remainingTime": "00:00:20"
+}</code></pre>
+<p class="src-ref">Source: src/slskd/Transfers/Types/Transfer.cs; src/web/src/lib/transfers.js</p>
+
+<h2 id="transfer-grouping">DirectoryResponse, UserResponse &amp; Batch</h2>
+<p>Transfer listings are grouped for transport. <code>UserResponse</code> groups by user, each containing <code>DirectoryResponse</code> entries that group <a href="#transfer">Transfer</a> records by directory.</p>
+
+<div class="table-wrap"><table>
+<thead><tr><th>Type / Field</th><th>JSON name</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><strong>UserResponse</strong>.Username</td><td><code>username</code></td><td><span class="type">string</span></td><td>The peer's username.</td></tr>
+<tr><td><strong>UserResponse</strong>.Directories</td><td><code>directories</code></td><td><span class="type">DirectoryResponse[]</span></td><td>The per-directory transfer groups.</td></tr>
+<tr><td><strong>DirectoryResponse</strong>.Directory</td><td><code>directory</code></td><td><span class="type">string</span></td><td>The directory path.</td></tr>
+<tr><td><strong>DirectoryResponse</strong>.FileCount</td><td><code>fileCount</code></td><td><span class="type">int32</span></td><td>Number of transfers in this directory.</td></tr>
+<tr><td><strong>DirectoryResponse</strong>.Files</td><td><code>files</code></td><td><span class="type">Transfer[]</span></td><td>The transfer records in this directory.</td></tr>
+</tbody>
+</table></div>
+
+<p>A <strong>Batch</strong> (<code>slskd.Transfers.Batch</code>) is a lightweight association of related download <a href="#transfer">Transfer</a> records, optionally tied to the <a href="#search">Search</a> that produced them. It exists so a caller that enqueued a batch can poll completion; it carries no aggregate counters (deliberately — see source notes).</p>
+
+<div class="table-wrap"><table>
+<thead><tr><th>Field</th><th>JSON name</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>Id</td><td><code>id</code></td><td><span class="type">Guid</span></td><td>Unique batch identifier.</td></tr>
+<tr><td>SearchId</td><td><code>searchId</code></td><td><span class="type">Guid?</span></td><td>The associated <a href="#search">Search</a> id, if specified at enqueue; omitted otherwise.</td></tr>
+<tr><td>Username</td><td><code>username</code></td><td><span class="type">string</span></td><td>The peer the batch downloads from.</td></tr>
+<tr><td>Direction</td><td><code>direction</code></td><td><span class="type">TransferDirection</span></td><td>Always <code>"Download"</code> — upload batches are not implemented.</td></tr>
+<tr><td>CreatedAt</td><td><code>createdAt</code></td><td><span class="type">DateTime</span></td><td>When the batch was created (UTC).</td></tr>
+<tr><td>Transfers</td><td><code>transfers</code></td><td><span class="type">Transfer[]</span></td><td>The member transfer records, when loaded.</td></tr>
+<tr><td>Options</td><td><code>options</code></td><td><span class="type">BatchOptions</span></td><td>Batch options: <code>destination</code> (download subdirectory) and <code>externalId</code>.</td></tr>
+</tbody>
+</table></div>
+
+<div class="note callout tip"><span class="label">Enqueue request shape</span><p>A batch is created via <code>QueueDownloadBatchRequest</code>: <code>id</code> (optional Guid), <code>searchId</code> (optional Guid), <code>username</code> (required), <code>files[]</code> of <code>{ filename, size }</code> (<code>EnqueueDownloadBatchItem</code>), and <code>options</code> = <code>{ destination, externalId }</code>. The response is <code>QueueDownloadBatchResponse</code> = <code>{ batch, failures[] }</code>, where each failure is <code>{ filename, message }</code>. The simpler per-file request is <code>QueueDownloadRequest</code> = <code>{ filename, size }</code>.</p></div>
+<p class="src-ref">Source: src/slskd/Transfers/API/DTO/{DirectoryResponse,UserResponse,QueueDownloadRequest,QueueDownloadBatchRequest,QueueDownloadBatchResponse}.cs; src/slskd/Transfers/Types/{Batch,BatchOptions}.cs</p>
+
+<h2 id="upload-group">Upload &amp; UploadGroup</h2>
+<p>These are upload-scheduling internals; <code>UploadGroup</code> in particular is observable via the upload-queue status surface. (The standalone <code>Upload</code> type is an in-memory scheduling record — not the same as a transfer with <code>direction: "Upload"</code>, which is a <a href="#transfer">Transfer</a>.)</p>
+
+<div class="table-wrap"><table>
+<thead><tr><th>Type / Field</th><th>JSON name</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><strong>UploadGroup</strong>.Name</td><td><code>name</code></td><td><span class="type">string</span></td><td>The group name (user group whose uploads share this slot budget).</td></tr>
+<tr><td><strong>UploadGroup</strong>.Priority</td><td><code>priority</code></td><td><span class="type">int32</span></td><td>Scheduling priority (lower-numbered groups are served first).</td></tr>
+<tr><td><strong>UploadGroup</strong>.Slots</td><td><code>slots</code></td><td><span class="type">int32</span></td><td>Total concurrent upload slots allotted to the group.</td></tr>
+<tr><td><strong>UploadGroup</strong>.UsedSlots</td><td><code>usedSlots</code></td><td><span class="type">int32</span></td><td>Slots currently in use.</td></tr>
+<tr><td><strong>UploadGroup</strong>.SlotAvailable</td><td><code>slotAvailable</code></td><td><span class="type">bool</span></td><td>Derived: <code>usedSlots &lt; slots</code>.</td></tr>
+<tr><td><strong>UploadGroup</strong>.Strategy</td><td><code>strategy</code></td><td><span class="type">QueueStrategy</span></td><td>The queueing strategy (<code>"RoundRobin"</code> or <code>"FirstInFirstOut"</code>).</td></tr>
+<tr><td><strong>Upload</strong>.Username</td><td><code>username</code></td><td><span class="type">string</span></td><td>The requesting peer (internal scheduling record).</td></tr>
+<tr><td><strong>Upload</strong>.Filename</td><td><code>filename</code></td><td><span class="type">string</span></td><td>The file to upload.</td></tr>
+<tr><td><strong>Upload</strong>.Group</td><td><code>group</code></td><td><span class="type">string</span></td><td>The user's group.</td></tr>
+<tr><td><strong>Upload</strong>.Enqueued</td><td><code>enqueued</code></td><td><span class="type">DateTime</span></td><td>When the upload was enqueued.</td></tr>
+<tr><td><strong>Upload</strong>.Ready</td><td><code>ready</code></td><td><span class="type">DateTime?</span></td><td>When the upload became ready to schedule; omitted if not yet ready.</td></tr>
+<tr><td><strong>Upload</strong>.Started</td><td><code>started</code></td><td><span class="type">DateTime?</span></td><td>When the upload started; omitted if not started.</td></tr>
+</tbody>
+</table></div>
+<p class="src-ref">Source: src/slskd/Transfers/Types/UploadGroup.cs, Upload.cs, QueueStrategy.cs</p>
+
+<h2 id="share">Share, Host &amp; Scan</h2>
+<p>A <code>Share</code> (<code>slskd.Shares.Share</code>) describes one configured share mapping (local path → remote alias). A <code>Host</code> groups the shares belonging to one slskd instance (the local instance, or a <a href="relay.html">Relay</a> agent). A <code>Scan</code> records a share-indexing pass.</p>
+
+<div class="table-wrap"><table>
+<thead><tr><th>Type / Field</th><th>JSON name</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><strong>Share</strong>.Id</td><td><code>id</code></td><td><span class="type">string</span></td><td>Share identifier (SHA-1 of the remote path).</td></tr>
+<tr><td><strong>Share</strong>.Alias</td><td><code>alias</code></td><td><span class="type">string</span></td><td>The share alias (the leaf of the path, or an explicit <code>[alias]</code>).</td></tr>
+<tr><td><strong>Share</strong>.IsExcluded</td><td><code>isExcluded</code></td><td><span class="type">bool</span></td><td>Whether this is an exclusion rule (a raw entry beginning with <code>-</code> or <code>!</code>).</td></tr>
+<tr><td><strong>Share</strong>.LocalPath</td><td><code>localPath</code></td><td><span class="type">string</span></td><td>The local filesystem path.</td></tr>
+<tr><td><strong>Share</strong>.RemotePath</td><td><code>remotePath</code></td><td><span class="type">string</span></td><td>The path exposed to the network (equals the alias).</td></tr>
+<tr><td><strong>Share</strong>.Raw</td><td><code>raw</code></td><td><span class="type">string</span></td><td>The original raw configuration string.</td></tr>
+<tr><td><strong>Share</strong>.Directories</td><td><code>directories</code></td><td><span class="type">int32?</span></td><td>Directory count from the last scan; omitted until scanned.</td></tr>
+<tr><td><strong>Share</strong>.Files</td><td><code>files</code></td><td><span class="type">int32?</span></td><td>File count from the last scan; omitted until scanned.</td></tr>
+<tr><td><strong>Host</strong>.Name</td><td><code>name</code></td><td><span class="type">string</span></td><td>Host name — the configured instance name, or <code>"local"</code> for the local host.</td></tr>
+<tr><td><strong>Host</strong>.IsLocalHost</td><td><code>isLocalHost</code></td><td><span class="type">bool</span></td><td>Whether this host is the local instance.</td></tr>
+<tr><td><strong>Host</strong>.Shares</td><td><code>shares</code></td><td><span class="type">Share[]</span></td><td>The shares hosted by this host.</td></tr>
+<tr><td><strong>Scan</strong>.StartedAt</td><td><code>startedAt</code></td><td><span class="type">int64</span></td><td>Scan start time (epoch ticks/timestamp).</td></tr>
+<tr><td><strong>Scan</strong>.EndedAt</td><td><code>endedAt</code></td><td><span class="type">int64?</span></td><td>Scan end time; omitted while in progress.</td></tr>
+<tr><td><strong>Scan</strong>.OptionsJson</td><td><code>optionsJson</code></td><td><span class="type">string</span></td><td>The serialized share options snapshot for the scan.</td></tr>
+<tr><td><strong>Scan</strong>.Suspect</td><td><code>suspect</code></td><td><span class="type">bool</span></td><td>Whether the scan result is considered suspect (e.g. interrupted).</td></tr>
+</tbody>
+</table></div>
+
+<div class="note callout"><span class="label">Storage mode</span><p>The share index can be held in memory or persisted to a database on disk; this is governed by the <a href="#storagemode"><code>StorageMode</code></a> enum (<code>Memory</code> / <code>Disk</code>), configured rather than carried per-share.</p></div>
+
+<pre><code>{
+  "id": "a94a8fe5ccb19ba61c4c0873d391e987982fbbd3",
+  "alias": "Music",
+  "isExcluded": false,
+  "localPath": "/data/music",
+  "remotePath": "Music",
+  "raw": "[Music]/data/music",
+  "directories": 412,
+  "files": 9123
+}</code></pre>
+<p class="src-ref">Source: src/slskd/Shares/Types/{Share,Host,Scan,StorageMode}.cs</p>
+
+<h2 id="enums">Enumeration reference</h2>
+<p>This section consolidates every enum referenced above. Recall that all of these serialize as the member <em>name</em> (a string) in JSON, never the integer — the integer values are given because they are the values on the underlying Soulseek wire protocol and in the database, and are required when implementing a native client. <span class="type">[Flags]</span> enums combine bitwise and serialize as a comma-separated name list.</p>
+
+<h3 id="soulseekclientstates">SoulseekClientStates <span class="type">[Flags]</span></h3>
+<p>The connection/session state of the underlying Soulseek client. Surfaced in slskd's server/application state (e.g. as part of overall connectivity reporting).</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Member</th><th>Value</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>None</code></td><td><span class="type">0</span></td><td>None.</td></tr>
+<tr><td><code>Disconnected</code></td><td><span class="type">1</span></td><td>Disconnected.</td></tr>
+<tr><td><code>Connected</code></td><td><span class="type">2</span></td><td>Connected (TCP established).</td></tr>
+<tr><td><code>LoggedIn</code></td><td><span class="type">4</span></td><td>Logged in to the server.</td></tr>
+<tr><td><code>Connecting</code></td><td><span class="type">8</span></td><td>Connecting.</td></tr>
+<tr><td><code>LoggingIn</code></td><td><span class="type">16</span></td><td>Logging in.</td></tr>
+<tr><td><code>Disconnecting</code></td><td><span class="type">32</span></td><td>Disconnecting.</td></tr>
+</tbody>
+</table></div>
+<p>A fully ready client is <code>Connected | LoggedIn</code> (<code>"Connected, LoggedIn"</code>, value <code>6</code>).</p>
+<p class="src-ref">Source: Soulseek.NET 10.0.1 src/SoulseekClientState.cs; usage in src/slskd/Application.cs</p>
+
+<h3 id="searchstates">SearchStates <span class="type">[Flags]</span></h3>
+<p>The lifecycle state of a <a href="#search">Search</a>. <code>Completed</code> is the base terminal flag; the accompanying flag describes <em>why</em> it completed. <code>isComplete</code> on the Search entity is true whenever <code>Completed</code> is present.</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Member</th><th>Value</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>None</code></td><td><span class="type">0</span></td><td>None.</td></tr>
+<tr><td><code>Requested</code></td><td><span class="type">1</span></td><td>Requested (created, not yet active).</td></tr>
+<tr><td><code>InProgress</code></td><td><span class="type">2</span></td><td>In progress.</td></tr>
+<tr><td><code>Completed</code></td><td><span class="type">4</span></td><td>Completed (base flag).</td></tr>
+<tr><td><code>Cancelled</code></td><td><span class="type">8</span></td><td>Completed due to cancellation.</td></tr>
+<tr><td><code>TimedOut</code></td><td><span class="type">16</span></td><td>Completed due to the search timeout being reached.</td></tr>
+<tr><td><code>ResponseLimitReached</code></td><td><span class="type">32</span></td><td>Completed due to the configured response limit.</td></tr>
+<tr><td><code>FileLimitReached</code></td><td><span class="type">64</span></td><td>Completed due to the configured file limit.</td></tr>
+<tr><td><code>Errored</code></td><td><span class="type">128</span></td><td>Completed due to error.</td></tr>
+<tr><td><code>Queued</code></td><td><span class="type">256</span></td><td>Queued.</td></tr>
+</tbody>
+</table></div>
+<p>Typical terminal values: <code>"Completed, TimedOut"</code> (4 | 16 = 20), <code>"Completed, FileLimitReached"</code> (4 | 64 = 68), <code>"Completed, Cancelled"</code> (4 | 8 = 12).</p>
+<p class="src-ref">Source: Soulseek.NET 10.0.1 src/SearchStates.cs</p>
+
+<h3 id="transferstates">TransferStates <span class="type">[Flags]</span></h3>
+<p>The lifecycle state of a <a href="#transfer">Transfer</a>. As with searches, <code>Completed</code> (16) is the terminal base flag and a disposition flag accompanies it. The <code>Queued</code> flag (2) is refined by <code>Locally</code> (2048) or <code>Remotely</code> (4096). The slskd web client matches on the rendered strings (<code>"Completed, Succeeded"</code>, <code>"Queued, Remotely"</code>, …) to drive UI logic such as retry/cancel eligibility.</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Member</th><th>Value</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>None</code></td><td><span class="type">0</span></td><td>None.</td></tr>
+<tr><td><code>Requested</code></td><td><span class="type">1</span></td><td>Requested.</td></tr>
+<tr><td><code>Queued</code></td><td><span class="type">2</span></td><td>Queued (remotely for downloads, locally for uploads).</td></tr>
+<tr><td><code>Initializing</code></td><td><span class="type">4</span></td><td>Initializing (negotiating the data connection).</td></tr>
+<tr><td><code>InProgress</code></td><td><span class="type">8</span></td><td>In progress (transferring bytes).</td></tr>
+<tr><td><code>Completed</code></td><td><span class="type">16</span></td><td>Completed (base flag); inspect the remaining flags for disposition.</td></tr>
+<tr><td><code>Succeeded</code></td><td><span class="type">32</span></td><td>Completed successfully.</td></tr>
+<tr><td><code>Cancelled</code></td><td><span class="type">64</span></td><td>Completed due to cancellation.</td></tr>
+<tr><td><code>TimedOut</code></td><td><span class="type">128</span></td><td>Completed due to timeout.</td></tr>
+<tr><td><code>Errored</code></td><td><span class="type">256</span></td><td>Completed due to transfer error.</td></tr>
+<tr><td><code>Rejected</code></td><td><span class="type">512</span></td><td>Completed due to rejection by the peer.</td></tr>
+<tr><td><code>Aborted</code></td><td><span class="type">1024</span></td><td>Completed due to unexpected circumstances.</td></tr>
+<tr><td><code>Locally</code></td><td><span class="type">2048</span></td><td>Queued locally, due to user-defined constraints (combine with <code>Queued</code>).</td></tr>
+<tr><td><code>Remotely</code></td><td><span class="type">4096</span></td><td>Queued remotely (combine with <code>Queued</code>).</td></tr>
+</tbody>
+</table></div>
+
+<p>Common composite values (slskd computes these in <code>TransferStateCategories</code>):</p>
+<div class="table-wrap"><table>
+<thead><tr><th>String</th><th>Composite value</th><th>Category</th></tr></thead>
+<tbody>
+<tr><td><code>"Requested"</code></td><td><span class="type">1</span></td><td>Queued (optimistic)</td></tr>
+<tr><td><code>"Queued, Locally"</code></td><td><span class="type">2050</span> (2 | 2048)</td><td>Queued</td></tr>
+<tr><td><code>"Queued, Remotely"</code></td><td><span class="type">4098</span> (2 | 4096)</td><td>Queued</td></tr>
+<tr><td><code>"Initializing"</code></td><td><span class="type">4</span></td><td>InProgress</td></tr>
+<tr><td><code>"InProgress"</code></td><td><span class="type">8</span></td><td>InProgress</td></tr>
+<tr><td><code>"Completed, Succeeded"</code></td><td><span class="type">48</span> (16 | 32)</td><td>Completed → Successful</td></tr>
+<tr><td><code>"Completed, Cancelled"</code></td><td><span class="type">80</span> (16 | 64)</td><td>Completed → Failed</td></tr>
+<tr><td><code>"Completed, TimedOut"</code></td><td><span class="type">144</span> (16 | 128)</td><td>Completed → Failed</td></tr>
+<tr><td><code>"Completed, Errored"</code></td><td><span class="type">272</span> (16 | 256)</td><td>Completed → Failed</td></tr>
+<tr><td><code>"Completed, Rejected"</code></td><td><span class="type">528</span> (16 | 512)</td><td>Completed → Failed</td></tr>
+<tr><td><code>"Completed, Aborted"</code></td><td><span class="type">1040</span> (16 | 1024)</td><td>Completed → Failed</td></tr>
+</tbody>
+</table></div>
+
+<div class="note callout tip"><span class="label">TransferStateCategories</span><p>slskd groups these composites into query-friendly sets (it avoids bitwise <code>HasFlag</code> in SQL by enumerating exact values). The categories are: <strong>Successful</strong> = {<code>Completed | Succeeded</code>}; <strong>Failed</strong> = {<code>Cancelled, TimedOut, Errored, Rejected, Aborted</code>}, each OR'd with <code>Completed</code>; <strong>Completed</strong> = Successful ∪ Failed (∪ bare <code>Completed</code>); <strong>Queued</strong> = {<code>Requested, Queued, Queued|Locally, Queued|Remotely</code>}; <strong>InProgress</strong> = {<code>Initializing, InProgress</code>}. The web client's retry rule is "state contains <code>Completed</code> and is not <code>Completed, Succeeded</code>"; the cancel rule covers the InProgress/Requested/Queued states.</p></div>
+<p class="src-ref">Source: Soulseek.NET 10.0.1 src/TransferStates.cs; src/slskd/Transfers/Types/TransferStateCategories.cs; src/web/src/lib/transfers.js</p>
+
+<h3 id="transferdirection">TransferDirection</h3>
+<div class="table-wrap"><table>
+<thead><tr><th>Member</th><th>Value</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>Download</code></td><td><span class="type">0</span></td><td>Download; remote → local.</td></tr>
+<tr><td><code>Upload</code></td><td><span class="type">1</span></td><td>Upload; local → remote.</td></tr>
+</tbody>
+</table></div>
+<p class="src-ref">Source: Soulseek.NET 10.0.1 src/TransferDirection.cs</p>
+
+<h3 id="userpresence-ref">UserPresence</h3>
+<div class="table-wrap"><table>
+<thead><tr><th>Member</th><th>Value</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>Offline</code></td><td><span class="type">0</span></td><td>Offline.</td></tr>
+<tr><td><code>Away</code></td><td><span class="type">1</span></td><td>Away.</td></tr>
+<tr><td><code>Online</code></td><td><span class="type">2</span></td><td>Online.</td></tr>
+</tbody>
+</table></div>
+<p class="src-ref">Source: Soulseek.NET 10.0.1 src/UserPresence.cs</p>
+
+<h3 id="messagedirection">MessageDirection</h3>
+<p>Note the value ordering: <code>Out</code> is <code>0</code>, <code>In</code> is <code>1</code> (the reverse of the usual alphabetical guess).</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Member</th><th>Value</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>Out</code></td><td><span class="type">0</span></td><td>Outbound — sent by the local user.</td></tr>
+<tr><td><code>In</code></td><td><span class="type">1</span></td><td>Inbound — received from the remote user.</td></tr>
+</tbody>
+</table></div>
+<p class="src-ref">Source: src/slskd/Messaging/Types/MessageDirection.cs</p>
+
+<h3 id="queuestrategy">QueueStrategy</h3>
+<div class="table-wrap"><table>
+<thead><tr><th>Member</th><th>Value</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>RoundRobin</code></td><td><span class="type">0</span></td><td>Uploads prioritized by the time they became <em>ready</em>.</td></tr>
+<tr><td><code>FirstInFirstOut</code></td><td><span class="type">1</span></td><td>Uploads prioritized by the time they were <em>enqueued</em>.</td></tr>
+</tbody>
+</table></div>
+<p class="src-ref">Source: src/slskd/Transfers/Types/QueueStrategy.cs</p>
+
+<h3 id="storagemode">StorageMode</h3>
+<div class="table-wrap"><table>
+<thead><tr><th>Member</th><th>Value</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>Memory</code></td><td><span class="type">0</span></td><td>Share index stored in memory.</td></tr>
+<tr><td><code>Disk</code></td><td><span class="type">1</span></td><td>Share index stored on disk.</td></tr>
+</tbody>
+</table></div>
+<p class="src-ref">Source: src/slskd/Shares/Types/StorageMode.cs</p>
+
+<h3 id="relaymode">RelayMode</h3>
+<p>The operating mode of the <a href="relay.html">Relay</a> subsystem.</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Member</th><th>Value</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>Controller</code></td><td><span class="type">0</span></td><td>Controller mode (the network-facing instance that other agents connect to).</td></tr>
+<tr><td><code>Agent</code></td><td><span class="type">1</span></td><td>Agent mode (a worker instance that relays its shares/files to a controller).</td></tr>
+<tr><td><code>Debug</code></td><td><span class="type">2</span></td><td>Debug mode; operates as both controller and agent.</td></tr>
+</tbody>
+</table></div>
+<p class="src-ref">Source: src/slskd/Relay/Types/RelayMode.cs</p>
+
+<h3 id="other-strategy-enums">Download-placement strategy enums</h3>
+<p>Two further transfer enums govern how downloaded files are written; they are configuration/request-time options rather than fields on the persisted <a href="#transfer">Transfer</a>.</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Enum</th><th>Member</th><th>Value</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td rowspan="2"><code>DestinationConflictStrategy</code></td><td><code>Rename</code></td><td><span class="type">0</span></td><td>Rename the new file (append a suffix) when a name conflicts.</td></tr>
+<tr><td><code>Overwrite</code></td><td><span class="type">1</span></td><td>Overwrite the existing file.</td></tr>
+<tr><td rowspan="2"><code>RetryPartialStrategy</code></td><td><code>Overwrite</code></td><td><span class="type">0</span></td><td>Re-download from the start, overwriting the partial file.</td></tr>
+<tr><td><code>Resume</code></td><td><span class="type">1</span></td><td>Resume using the partial file's size as the start offset.</td></tr>
+</tbody>
+</table></div>
+<p class="src-ref">Source: src/slskd/Transfers/Types/{DestinationConflictStrategy,RetryPartialStrategy}.cs</p>
+
+    <div class="page-nav-links">
+      <a class="prev" href="soulseek-protocol.html"><span class="dir">&larr; Previous</span><br><span class="ttl">Soulseek Wire Protocol</span></a>
+      <a class="next" href="search.html"><span class="dir">Next &rarr;</span><br><span class="ttl">Search</span></a>
+    </div>
+    <footer class="page-footer">
+      <span>slskd / Soulseek Protocol &amp; Model Specification &middot; derived from source (slskd, Soulseek.NET 10.0.1) &middot; AGPL-3.0</span>
+      <span>Not an official Soulseek document.</span>
+    </footer>
+  </main>
+</div>
+</div>
+<script src="script.js"></script>
+</body>
+</html>

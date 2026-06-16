@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Overview · slskd Protocol &amp; Model Specification</title>
+<meta name="description" content="slskd / Soulseek network, protocol and data-model specification — Overview. A language-agnostic reference for building clients, apps and services that interoperate with the Soulseek platform.">
+<link rel="stylesheet" href="style.css">
+<script>(function(){try{var t=localStorage.getItem('slskd-spec-theme');if(t){document.documentElement.setAttribute('data-theme',t);}else if(window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches){document.documentElement.setAttribute('data-theme','dark');}}catch(e){}})();</script>
+</head>
+<body>
+<div class="scrim"></div>
+<div class="layout">
+<aside class="sidebar">
+  <div class="brand">
+    <div class="logo">sd</div>
+    <div class="brand-text">
+      <span class="brand-title">slskd Spec</span>
+      <span class="brand-sub">Soulseek protocol &amp; model</span>
+    </div>
+  </div>
+  <div class="nav-filter-wrap"><input class="nav-filter" type="text" placeholder="Filter pages…" aria-label="Filter pages"></div>
+  <nav>
+  <div class="nav-group-label">Introduction</div>
+  <ul>
+    <li class="active"><a href="index.html" aria-current="page"><span class="nav-num">1</span><span>Overview</span></a></li>
+    <li><a href="architecture.html"><span class="nav-num">2</span><span>Architecture &amp; Concepts</span></a></li>
+  </ul>
+  <div class="nav-group-label">The Soulseek Network</div>
+  <ul>
+    <li><a href="soulseek-protocol.html"><span class="nav-num">3</span><span>Soulseek Wire Protocol</span></a></li>
+    <li><a href="data-model.html"><span class="nav-num">4</span><span>Data Model &amp; Types</span></a></li>
+  </ul>
+  <div class="nav-group-label">Domains</div>
+  <ul>
+    <li><a href="search.html"><span class="nav-num">5</span><span>Search</span></a></li>
+    <li><a href="transfers.html"><span class="nav-num">6</span><span>Transfers &amp; Queueing</span></a></li>
+    <li><a href="users-rooms.html"><span class="nav-num">7</span><span>Users, Rooms &amp; Chat</span></a></li>
+    <li><a href="shares.html"><span class="nav-num">8</span><span>Shares &amp; Browsing</span></a></li>
+  </ul>
+  <div class="nav-group-label">Integration</div>
+  <ul>
+    <li><a href="authentication.html"><span class="nav-num">9</span><span>Authentication &amp; Security</span></a></li>
+    <li><a href="rest-api.html"><span class="nav-num">10</span><span>REST API Reference</span></a></li>
+    <li><a href="realtime-api.html"><span class="nav-num">11</span><span>Real-Time API &amp; Events</span></a></li>
+    <li><a href="relay.html"><span class="nav-num">12</span><span>Relay Protocol</span></a></li>
+  </ul>
+</nav>
+</aside>
+<div class="main-col">
+  <header class="topbar">
+    <button class="menu-btn" aria-label="Toggle navigation">&#9776;</button>
+    <span class="crumb">Introduction / <b>Overview</b></span>
+    <span class="spacer"></span>
+    <a class="tb-link" href="index.html#sitemap">Contents</a>
+    <a class="tb-link" href="https://github.com/slskd/slskd" target="_blank" rel="noopener">GitHub</a>
+    <button class="theme-toggle" aria-label="Toggle dark mode" title="Toggle theme">◐</button>
+  </header>
+  <main class="content">
+
+<h1>Overview</h1>
+<p class="page-lede">This is a reference-grade, language-agnostic specification of <strong>slskd</strong> and the <strong>Soulseek</strong> peer-to-peer file-sharing network it participates in. It is written for engineers building a client, application, integration, or service in <em>any</em> language that must interoperate with the Soulseek platform — either by speaking the native Soulseek wire protocol directly, or by driving a running slskd daemon over its HTTP REST and SignalR APIs. The specification is derived from the slskd source tree and the embedded <a href="https://github.com/slskd/Soulseek.NET" target="_blank" rel="noopener">Soulseek.NET</a> library (v10.0.1), cross-checked against the community-maintained protocol documentation.</p>
+
+<nav class="toc">
+  <div class="toc-title">On this page</div>
+  <ul>
+    <li><a href="#what-is-slskd">What slskd is</a></li>
+    <li><a href="#two-surfaces">Two interoperation surfaces</a></li>
+    <li><a href="#sitemap">Specification site map</a></li>
+    <li><a href="#conventions">Conventions used throughout</a></li>
+    <li><a href="#glossary">Glossary</a></li>
+    <li><a href="#provenance">Provenance &amp; version note</a></li>
+  </ul>
+</nav>
+
+<h2 id="what-is-slskd">What slskd is</h2>
+<p>slskd is a modern, self-hostable, client-server application for the Soulseek file-sharing network. It runs as a long-lived daemon (or Docker container) on a server in your network or in the cloud, connects to the central Soulseek server and to peers, shares files, performs searches, and transfers files — and exposes all of this functionality through a browser-based web UI, an HTTP REST API, and a SignalR real-time API.</p>
+
+<p>Internally, slskd embeds the <strong>Soulseek.NET</strong> library to implement the native Soulseek wire protocol. Soulseek.NET handles the framed, little-endian, length-prefixed binary message exchange with the central server and with peers; slskd layers configuration, persistence (SQLite), share management, queueing, an integration/event system, and the public web/API surface on top. The two layers are conceptually distinct and are documented separately in this spec.</p>
+
+<div class="table-wrap">
+<table>
+<thead><tr><th>Property</th><th>Value</th><th>Source</th></tr></thead>
+<tbody>
+<tr><td>Application name</td><td><code>slskd</code></td><td><code>Program.AppName</code></td></tr>
+<tr><td>Protocol library</td><td>Soulseek.NET <span class="type">10.0.1</span></td><td><code>slskd.csproj</code> PackageReference <code>Soulseek</code></td></tr>
+<tr><td>License</td><td>AGPL-3.0-only (with Section 7 Additional Terms)</td><td><code>Program.cs</code> copyright header</td></tr>
+<tr><td>Network minor version</td><td><span class="type">760</span> (advertised identity of the client on the network)</td><td><code>Program.NetworkMinorVersion</code></td></tr>
+<tr><td>Default app data directory</td><td><code>~/.local/share/slskd</code> (Linux/macOS) · <code>%localappdata%/slskd</code> (Windows)</td><td><code>Program.DefaultAppDirectory</code>, README</td></tr>
+<tr><td>Genesis date</td><td>2020-12-30T06:22:00Z (initial commit; used as an epoch reference)</td><td><code>Program.GenesisDateTime</code></td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="table-wrap">
+<table>
+<thead><tr><th>Listener</th><th>Default port</th><th>Purpose</th><th>Source</th></tr></thead>
+<tbody>
+<tr><td>HTTP (web UI + API)</td><td><span class="type">5030</span></td><td>Web UI, REST API, SignalR hubs over plain HTTP</td><td><code>Options.WebOptions.Port</code></td></tr>
+<tr><td>HTTPS (web UI + API)</td><td><span class="type">5031</span></td><td>Same surface over TLS (self-signed certificate by default)</td><td><code>Options.WebOptions.HttpsOptions.Port</code></td></tr>
+<tr><td>Soulseek listen port</td><td><span class="type">50300</span></td><td>Incoming peer/distributed connections on the Soulseek network</td><td><code>Options.SoulseekOptions.ListenPort</code></td></tr>
+</tbody>
+</table>
+</div>
+<p class="src-ref">Source: src/slskd/Program.cs, src/slskd/Core/Options.cs, README.md</p>
+
+<div class="note callout"><span class="label">Note</span><p>The HTTP/HTTPS ports (<code>5030</code>/<code>5031</code>) carry the slskd <em>web/API</em> surface and are unrelated to the Soulseek protocol. The Soulseek listen port (<code>50300</code>) is where slskd accepts incoming connections from <em>other Soulseek peers</em>. A client that speaks the wire protocol does not use the REST/SignalR ports at all, and vice versa.</p></div>
+
+<h2 id="two-surfaces">Two interoperation surfaces</h2>
+<p>This specification is organized around a fundamental distinction. There are two completely separate ways to interoperate with the Soulseek platform, and which one you target determines which pages of this spec apply to you.</p>
+
+<div class="card-grid">
+  <a class="card" href="soulseek-protocol.html">
+    <span class="kicker">Surface A</span>
+    <h3>Speak the native wire protocol</h3>
+    <p>Connect directly to the central Soulseek server and to peers, exchanging framed binary messages. This is the lowest-level, fully independent path: you implement the protocol yourself and behave as a first-class Soulseek client. No slskd instance is required.</p>
+  </a>
+  <a class="card" href="rest-api.html">
+    <span class="kicker">Surface B</span>
+    <h3>Drive a slskd daemon over REST/SignalR</h3>
+    <p>Run (or connect to) a slskd instance and control it over its HTTP REST API and SignalR real-time hubs. slskd handles all wire-protocol details; you issue JSON commands and consume JSON events. This is the fastest path to integration in any language with an HTTP client.</p>
+  </a>
+</div>
+
+<div class="table-wrap">
+<table>
+<thead><tr><th>Aspect</th><th>Surface A — Wire protocol</th><th>Surface B — slskd REST/SignalR</th></tr></thead>
+<tbody>
+<tr><td>Transport</td><td>Raw TCP, framed binary messages (little-endian)</td><td>HTTP/HTTPS (JSON) + SignalR (WebSocket/SSE/long-poll)</td></tr>
+<tr><td>Encoding</td><td>Length-prefixed binary; int32/int64 LE, length-prefixed UTF-8 strings</td><td>JSON, camelCase property names</td></tr>
+<tr><td>Peer relationship</td><td>You are a peer; you connect to the server and other peers directly</td><td>slskd is the peer; you are a controller of slskd</td></tr>
+<tr><td>Authentication</td><td>Soulseek username/password to the central server (Login message)</td><td>JWT bearer token or API key against the slskd instance</td></tr>
+<tr><td>Port forwarding / firewall</td><td>Required for full functionality (incoming peer connections)</td><td>Only the slskd instance needs it; clients reach slskd over HTTP</td></tr>
+<tr><td>Primary spec pages</td><td><a href="soulseek-protocol.html">Wire Protocol</a>, <a href="data-model.html">Data Model</a></td><td><a href="rest-api.html">REST API</a>, <a href="realtime-api.html">Real-Time API</a></td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="tip callout"><span class="label">Tip</span><p>Most pages of this spec serve both audiences: the domain pages (<a href="search.html">Search</a>, <a href="transfers.html">Transfers</a>, <a href="users-rooms.html">Users &amp; Rooms</a>, <a href="shares.html">Shares</a>) describe each capability at the conceptual level, then map it down to both the wire messages (Surface A) and the REST/SignalR endpoints (Surface B). The <a href="data-model.html">Data Model</a> page is the shared vocabulary used by both.</p></div>
+
+<h2 id="sitemap">Specification site map</h2>
+<p>The specification is divided into the following pages. Each can be read independently, but they cross-reference heavily.</p>
+
+<div class="card-grid">
+  <a class="card" href="architecture.html">
+    <span class="kicker">2 · Introduction</span>
+    <h3>Architecture &amp; Concepts</h3>
+    <p>How slskd is structured: the Soulseek.NET core, services, persistence, the connection topology (server / peer / distributed / file connections), and the lifecycle of a request through the system.</p>
+  </a>
+  <a class="card" href="soulseek-protocol.html">
+    <span class="kicker">3 · The Soulseek Network</span>
+    <h3>Soulseek Wire Protocol</h3>
+    <p>The framed binary protocol: server messages, peer messages, distributed messages, message codes, framing rules, and the connection handshake. The reference for Surface A.</p>
+  </a>
+  <a class="card" href="data-model.html">
+    <span class="kicker">4 · The Soulseek Network</span>
+    <h3>Data Model &amp; Types</h3>
+    <p>The shared entities — file, directory, search response, user info/status, transfer, room — and the primitive wire types (int32/int64, strings, booleans). The common vocabulary for both surfaces.</p>
+  </a>
+  <a class="card" href="search.html">
+    <span class="kicker">5 · Domains</span>
+    <h3>Search</h3>
+    <p>Issuing distributed searches, search tokens, result aggregation, the wishlist, and the search-related wire messages and REST/SignalR endpoints.</p>
+  </a>
+  <a class="card" href="transfers.html">
+    <span class="kicker">6 · Domains</span>
+    <h3>Transfers &amp; Queueing</h3>
+    <p>Download and upload lifecycle, queueing and place-in-queue, upload slots, transfer states, and the file connection used to move bytes.</p>
+  </a>
+  <a class="card" href="users-rooms.html">
+    <span class="kicker">7 · Domains</span>
+    <h3>Users, Rooms &amp; Chat</h3>
+    <p>User status and info, watching users, private messages, chat rooms, room membership and tickers, and privileged users.</p>
+  </a>
+  <a class="card" href="shares.html">
+    <span class="kicker">8 · Domains</span>
+    <h3>Shares &amp; Browsing</h3>
+    <p>Share configuration and scanning, browsing another user's shares, the browse response format, locked files, and directory contents.</p>
+  </a>
+  <a class="card" href="authentication.html">
+    <span class="kicker">9 · Integration</span>
+    <h3>Authentication &amp; Security</h3>
+    <p>Soulseek server login on Surface A; JWT tokens, API keys, roles, and the security model of the slskd API on Surface B.</p>
+  </a>
+  <a class="card" href="rest-api.html">
+    <span class="kicker">10 · Integration</span>
+    <h3>REST API Reference</h3>
+    <p>The complete <code>/api/v0</code> HTTP surface: every controller, route, method, request/response DTO, and required role. The reference for Surface B.</p>
+  </a>
+  <a class="card" href="realtime-api.html">
+    <span class="kicker">11 · Integration</span>
+    <h3>Real-Time API &amp; Events</h3>
+    <p>The SignalR hubs (<code>/hub/application</code>, <code>/hub/logs</code>, <code>/hub/search</code>, <code>/hub/relay</code>), the events they push, and the internal event model.</p>
+  </a>
+  <a class="card" href="relay.html">
+    <span class="kicker">12 · Integration</span>
+    <h3>Relay Protocol</h3>
+    <p>The controller/agent relay mode: how a single Soulseek login serves files from multiple slskd instances, the relay HTTP endpoints, and its security model.</p>
+  </a>
+</div>
+
+<h2 id="conventions">Conventions used throughout</h2>
+<p>These conventions hold across the entire specification. Page-specific exceptions are called out where they occur.</p>
+
+<h3 id="conv-wire">Wire protocol (Surface A)</h3>
+<p>The Soulseek wire protocol is a binary, <strong>little-endian</strong>, length-prefixed message protocol over TCP.</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Element</th><th>Encoding</th></tr></thead>
+<tbody>
+<tr><td>Integer (32-bit)</td><td><span class="type">int32</span>, little-endian, typically unsigned for codes/lengths</td></tr>
+<tr><td>Integer (64-bit)</td><td><span class="type">int64</span>, little-endian (e.g. file sizes, byte offsets)</td></tr>
+<tr><td>Boolean</td><td>1 byte: <code>0x00</code> = false, <code>0x01</code> = true</td></tr>
+<tr><td>String</td><td><span class="type">int32</span> length prefix (byte count) followed by that many UTF-8 bytes; no NUL terminator</td></tr>
+<tr><td>Message frame</td><td>4-byte LE total length, then 4-byte LE message code, then the payload. The length field counts the code plus payload (it does not count its own 4 bytes)</td></tr>
+</tbody>
+</table>
+</div>
+<div class="warn callout"><span class="label">Warn</span><p>Message <em>codes</em> overlap between connection types: a code value is only meaningful relative to its connection context (server vs. peer vs. distributed). The same numeric code can mean different things on different connections. Always interpret a code together with the connection it arrived on. See <a href="soulseek-protocol.html">Soulseek Wire Protocol</a>.</p></div>
+
+<h3 id="conv-rest">slskd REST API (Surface B)</h3>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Convention</th><th>Detail</th><th>Source</th></tr></thead>
+<tbody>
+<tr><td>Base path</td><td><code>/api/v0</code> (API version <code>v0</code>, format <code>'v'VVV</code>, substituted in URL)</td><td><code>config.js</code> <code>apiBaseUrl</code>; <code>Program.cs</code> API versioning</td></tr>
+<tr><td>Request/response bodies</td><td>JSON</td><td><code>Program.cs</code> <code>AddControllers().AddJsonOptions()</code></td></tr>
+<tr><td>JSON property casing</td><td><strong>camelCase</strong> — a C# property <code>BytesTransferred</code> serializes as <code>bytesTransferred</code> (ASP.NET Core default policy; confirmed by the web client lib)</td><td><code>src/web/src/lib/*.js</code></td></tr>
+<tr><td>Enums in JSON</td><td>Serialized as <strong>strings</strong> (<code>JsonStringEnumConverter</code> registered)</td><td><code>Program.cs</code></td></tr>
+<tr><td>Null properties</td><td>Omitted when writing (<code>DefaultIgnoreCondition = WhenWritingNull</code>)</td><td><code>Program.cs</code></td></tr>
+<tr><td>Path segments for filenames/directories</td><td>Some routes (e.g. file management under <code>/files/{root}/...</code>) take <strong>base64-encoded</strong> directory/file paths as a path segment; others URL-encode the value</td><td><code>src/web/src/lib/files.js</code> (uses <code>btoa(...)</code>)</td></tr>
+<tr><td>Timestamps</td><td>JSON date-time strings; absolute times are UTC unless a field is explicitly a local/relative value (verify per field on the <a href="data-model.html">Data Model</a> page)</td><td>—</td></tr>
+</tbody>
+</table>
+</div>
+<div class="note callout"><span class="label">Note</span><p>The example URLs above include a <code>rootUrl</code> / URL-base prefix in the web client only to support reverse-proxy subpath hosting; in this spec, REST routes are written relative to the <code>/api/v0</code> base (e.g. <code>/api/v0/searches/{id}</code>). See <a href="rest-api.html">REST API Reference</a>.</p></div>
+
+<h3 id="conv-realtime">Real-time API (Surface B)</h3>
+<p>Real-time push uses <strong>SignalR</strong> hubs mounted under <code>/hub</code>. The web client connects to <code>hubBaseUrl = rootUrl + "/hub"</code>.</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Hub</th><th>Path</th><th>Purpose</th></tr></thead>
+<tbody>
+<tr><td>Application</td><td><code>/hub/application</code></td><td>Application-wide state and events (server state, transfers, options, etc.)</td></tr>
+<tr><td>Logs</td><td><code>/hub/logs</code></td><td>Streaming log records</td></tr>
+<tr><td>Search</td><td><code>/hub/search</code></td><td>Search lifecycle and incoming responses</td></tr>
+<tr><td>Relay</td><td><code>/hub/relay</code></td><td>Controller/agent relay coordination</td></tr>
+</tbody>
+</table>
+</div>
+<p class="src-ref">Source: src/slskd/Program.cs (MapHub registrations), src/web/src/config.js</p>
+
+<h3 id="conv-auth">Authentication (Surface B)</h3>
+<p>The slskd API supports two credential types, evaluated by separate authentication schemes:</p>
+<ul>
+<li><strong>JWT bearer token</strong> — obtained by logging in with the configured web username/password; presented as an <code>Authorization: Bearer &lt;token&gt;</code> header.</li>
+<li><strong>API key</strong> — a configured static key, presented in a request header; keys carry a role (e.g. <code>readonly</code>, <code>readwrite</code>) and may be scoped to an IP/CIDR.</li>
+</ul>
+<p>Endpoints are protected by role-based policies (<span class="badge role any">Any</span>, <span class="badge role readonly">ReadOnly</span>, <span class="badge role readwrite">ReadWrite</span>, <span class="badge role admin">Admin</span>). The default web credentials are <code>slskd</code> / <code>slskd</code> and must be changed for any exposed instance. See <a href="authentication.html">Authentication &amp; Security</a> for the full model, and note that this is entirely separate from the Soulseek <em>network</em> login (Surface A), which uses your Soulseek account credentials.</p>
+<p class="src-ref">Source: src/slskd/Program.cs (AddAuthentication, JwtBearer, ApiKey policies), README.md</p>
+
+<h2 id="glossary">Glossary</h2>
+<p>Terms used throughout the specification. Where a term has both a network meaning and a slskd-specific meaning, both are noted.</p>
+
+<div class="table-wrap">
+<table>
+<thead><tr><th>Term</th><th>Definition</th></tr></thead>
+<tbody>
+<tr><td id="g-server"><strong>Soulseek server</strong></td><td>The central, authoritative Soulseek server. Clients connect to it to log in, search, look up users, and join rooms. It coordinates the network but does not relay file data — files move directly between peers.</td></tr>
+<tr><td id="g-peer"><strong>Peer</strong></td><td>Another Soulseek client on the network. Peers connect to each other directly (subject to firewalls/NAT) to browse shares, exchange user info, request files, and transfer them.</td></tr>
+<tr><td id="g-peerconn"><strong>Peer connection (P)</strong></td><td>A direct peer-to-peer connection used for peer-type messages (browse, user info, file/queue requests). Conventionally denoted connection type <code>P</code>.</td></tr>
+<tr><td id="g-distributed"><strong>Distributed network (D)</strong></td><td>An overlay tree of peer connections used to propagate search queries across the network without flooding the central server. Conventionally denoted connection type <code>D</code>.</td></tr>
+<tr><td id="g-branch"><strong>Branch root / branch level</strong></td><td>In the distributed search tree, the <em>branch root</em> is the peer at the top of a client's branch; the <em>branch level</em> is that client's depth in the tree. The server and parent peers advertise/relay these so searches fan out efficiently.</td></tr>
+<tr><td id="g-fileconn"><strong>File connection (F)</strong></td><td>A dedicated peer connection opened to transfer the bytes of a single file. Separate from the peer (P) connection used for control messages. Conventionally denoted connection type <code>F</code>.</td></tr>
+<tr><td id="g-listenport"><strong>Listen port</strong></td><td>The TCP port a client advertises and listens on for incoming peer/distributed connections. slskd defaults to <span class="type">50300</span>. Reachability typically requires port forwarding.</td></tr>
+<tr><td id="g-token"><strong>Token</strong></td><td>(1) <em>Wire:</em> a client-generated <span class="type">int32</span> correlation id attached to a request (search, transfer, connection) so responses can be matched to it. (2) <em>slskd API:</em> a JWT bearer token authenticating an API caller. Context disambiguates.</td></tr>
+<tr><td id="g-searchtoken"><strong>Search token</strong></td><td>The token (correlation id) assigned to a specific search, used to associate incoming search responses with the originating query.</td></tr>
+<tr><td id="g-ticker"><strong>Ticker</strong></td><td>A short text message ("ticker"/topic) associated with a chat room, set by members and broadcast to the room.</td></tr>
+<tr><td id="g-slot"><strong>Slot / upload slot</strong></td><td>A unit of upload concurrency. A client offers a limited number of simultaneous upload slots; when none are free, incoming download requests are queued. "Has free slot" is part of a client's advertised state.</td></tr>
+<tr><td id="g-queue"><strong>Queue / place in queue</strong></td><td>When an upload slot is unavailable, a requested file is placed in the uploader's queue. The downloader can request its <em>place in queue</em> — its 1-based position pending transfer.</td></tr>
+<tr><td id="g-browse"><strong>Browse</strong></td><td>Requesting and receiving the full (or partial) directory/file listing of another user's shares over a peer connection.</td></tr>
+<tr><td id="g-share"><strong>Share</strong></td><td>A directory tree a client makes available to the network. slskd scans configured share roots into an index that answers searches and browse requests.</td></tr>
+<tr><td id="g-locked"><strong>Locked files</strong></td><td>Files that appear in a user's share listing/search results but are restricted from download (e.g. reserved for privileged or specific users). Browse and search responses can carry a separate locked set.</td></tr>
+<tr><td id="g-watch"><strong>Watch / watched user</strong></td><td>Subscribing to a user so the server pushes status/stat updates for them. slskd watches users it interacts with to track online/offline status, slots, and stats.</td></tr>
+<tr><td id="g-privileged"><strong>Privileged user</strong></td><td>A user with Soulseek privileges (historically purchased to support the network), granting priority placement in others' upload queues.</td></tr>
+<tr><td id="g-wishlist"><strong>Wishlist</strong></td><td>A saved/standing search that is re-issued periodically so the client is notified when matching files later appear on the network.</td></tr>
+<tr><td id="g-relayctl"><strong>Relay controller</strong></td><td>In relay mode, the slskd instance that connects to the Soulseek network and acts as the client. Agents connect to it. See <a href="relay.html">Relay Protocol</a>.</td></tr>
+<tr><td id="g-relayagent"><strong>Relay agent</strong></td><td>In relay mode, a slskd instance that connects to a controller (not to Soulseek) and relays files from its local storage to the controller. Think of it as remote storage for the controller.</td></tr>
+<tr><td id="g-daemon"><strong>Daemon</strong></td><td>The long-running slskd process/service that maintains the Soulseek connection and serves the web/API surface.</td></tr>
+<tr><td id="g-instance"><strong>slskd instance</strong></td><td>One running deployment of the slskd daemon, with its own configuration, data directory, and (in non-relay or controller mode) its own Soulseek login.</td></tr>
+</tbody>
+</table>
+</div>
+
+<h2 id="provenance">Provenance &amp; version note</h2>
+<p>This specification is <strong>unofficial</strong>. It is not produced or endorsed by Soulseek, by the slskd project, or by the author of Soulseek.NET. It was reconstructed by reading source code and authoritative references, and it describes behavior as implemented in the cited revision of slskd — actual on-network behavior of other clients and the central server may differ.</p>
+
+<div class="table-wrap">
+<table>
+<thead><tr><th>Item</th><th>Detail</th></tr></thead>
+<tbody>
+<tr><td>Primary source</td><td>The slskd source tree (<code>src/slskd</code>, <code>src/web</code>, <code>docs/</code>) at the repository's current revision</td></tr>
+<tr><td>Protocol implementation</td><td>Soulseek.NET <span class="type">10.0.1</span> (the embedded library that implements the wire protocol)</td></tr>
+<tr><td>License</td><td>slskd is licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-only), with Additional Terms pursuant to Section 7 of the AGPLv3</td></tr>
+<tr><td>Wire-protocol references</td><td>The Nicotine+ Soulseek protocol documentation (<code>SLSKPROTOCOL.md</code>) and the Soulseek.NET source were used as authoritative references for message codes, framing, and field layouts</td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="note callout"><span class="label">Note</span><p>External references for the wire-protocol layer (Surface A): the community-maintained <a href="https://github.com/nicotine-plus/nicotine-plus/blob/master/doc/SLSKPROTOCOL.md" target="_blank" rel="noopener">Nicotine+ SLSKPROTOCOL documentation</a> and the <a href="https://github.com/slskd/Soulseek.NET" target="_blank" rel="noopener">Soulseek.NET</a> library. Where this spec states a specific message code, port, default, or enum value, it is grounded in the slskd source, in Soulseek.NET, or in one of these references; values that are inferred rather than directly verified are marked as such on the page where they appear.</p></div>
+
+<p>To begin, continue to <a href="architecture.html">Architecture &amp; Concepts</a> for the structural picture, or jump straight to <a href="soulseek-protocol.html">the Soulseek Wire Protocol</a> (Surface A) or the <a href="rest-api.html">REST API Reference</a> (Surface B).</p>
+
+    <div class="page-nav-links">
+      <span></span>
+      <a class="next" href="architecture.html"><span class="dir">Next &rarr;</span><br><span class="ttl">Architecture &amp; Concepts</span></a>
+    </div>
+    <footer class="page-footer">
+      <span>slskd / Soulseek Protocol &amp; Model Specification &middot; derived from source (slskd, Soulseek.NET 10.0.1) &middot; AGPL-3.0</span>
+      <span>Not an official Soulseek document.</span>
+    </footer>
+  </main>
+</div>
+</div>
+<script src="script.js"></script>
+</body>
+</html>

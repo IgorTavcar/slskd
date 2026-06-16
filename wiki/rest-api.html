@@ -1,0 +1,801 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>REST API Reference · slskd Protocol &amp; Model Specification</title>
+<meta name="description" content="slskd / Soulseek network, protocol and data-model specification — REST API Reference. A language-agnostic reference for building clients, apps and services that interoperate with the Soulseek platform.">
+<link rel="stylesheet" href="style.css">
+<script>(function(){try{var t=localStorage.getItem('slskd-spec-theme');if(t){document.documentElement.setAttribute('data-theme',t);}else if(window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches){document.documentElement.setAttribute('data-theme','dark');}}catch(e){}})();</script>
+</head>
+<body>
+<div class="scrim"></div>
+<div class="layout">
+<aside class="sidebar">
+  <div class="brand">
+    <div class="logo">sd</div>
+    <div class="brand-text">
+      <span class="brand-title">slskd Spec</span>
+      <span class="brand-sub">Soulseek protocol &amp; model</span>
+    </div>
+  </div>
+  <div class="nav-filter-wrap"><input class="nav-filter" type="text" placeholder="Filter pages…" aria-label="Filter pages"></div>
+  <nav>
+  <div class="nav-group-label">Introduction</div>
+  <ul>
+    <li><a href="index.html"><span class="nav-num">1</span><span>Overview</span></a></li>
+    <li><a href="architecture.html"><span class="nav-num">2</span><span>Architecture &amp; Concepts</span></a></li>
+  </ul>
+  <div class="nav-group-label">The Soulseek Network</div>
+  <ul>
+    <li><a href="soulseek-protocol.html"><span class="nav-num">3</span><span>Soulseek Wire Protocol</span></a></li>
+    <li><a href="data-model.html"><span class="nav-num">4</span><span>Data Model &amp; Types</span></a></li>
+  </ul>
+  <div class="nav-group-label">Domains</div>
+  <ul>
+    <li><a href="search.html"><span class="nav-num">5</span><span>Search</span></a></li>
+    <li><a href="transfers.html"><span class="nav-num">6</span><span>Transfers &amp; Queueing</span></a></li>
+    <li><a href="users-rooms.html"><span class="nav-num">7</span><span>Users, Rooms &amp; Chat</span></a></li>
+    <li><a href="shares.html"><span class="nav-num">8</span><span>Shares &amp; Browsing</span></a></li>
+  </ul>
+  <div class="nav-group-label">Integration</div>
+  <ul>
+    <li><a href="authentication.html"><span class="nav-num">9</span><span>Authentication &amp; Security</span></a></li>
+    <li class="active"><a href="rest-api.html" aria-current="page"><span class="nav-num">10</span><span>REST API Reference</span></a></li>
+    <li><a href="realtime-api.html"><span class="nav-num">11</span><span>Real-Time API &amp; Events</span></a></li>
+    <li><a href="relay.html"><span class="nav-num">12</span><span>Relay Protocol</span></a></li>
+  </ul>
+</nav>
+</aside>
+<div class="main-col">
+  <header class="topbar">
+    <button class="menu-btn" aria-label="Toggle navigation">&#9776;</button>
+    <span class="crumb">Integration / <b>REST API Reference</b></span>
+    <span class="spacer"></span>
+    <a class="tb-link" href="index.html#sitemap">Contents</a>
+    <a class="tb-link" href="https://github.com/slskd/slskd" target="_blank" rel="noopener">GitHub</a>
+    <button class="theme-toggle" aria-label="Toggle dark mode" title="Toggle theme">◐</button>
+  </header>
+  <main class="content">
+
+<h1>REST API Reference</h1>
+<p class="page-lede">The complete catalogue of HTTP endpoints exposed by a slskd daemon. Every controller action is documented below with its HTTP method, full path, authorization policy/role, path and query parameters, request and response shapes, and notable status codes. All routes are versioned under <code>/api/v0</code>, accept and return <code>application/json</code> with camelCase property names, and are authenticated as described in <a href="authentication.html">Authentication &amp; Security</a>. For the live, machine-readable contract, slskd also serves OpenAPI/Swagger documents under <code>/swagger</code>.</p>
+
+<nav class="toc">
+  <div class="toc-title">On this page</div>
+  <ul>
+    <li><a href="#conventions">Conventions</a></li>
+    <li><a href="#application">Application <code>/application</code></a></li>
+    <li><a href="#logs">Logs <code>/logs</code></a></li>
+    <li><a href="#options">Options <code>/options</code></a></li>
+    <li><a href="#server">Server <code>/server</code></a></li>
+    <li><a href="#session">Session <code>/session</code></a></li>
+    <li><a href="#searches">Searches <code>/searches</code></a></li>
+    <li><a href="#transfers">Transfers <code>/transfers</code></a></li>
+    <li><a href="#users">Users <code>/users</code></a></li>
+    <li><a href="#shares">Shares <code>/shares</code></a></li>
+    <li><a href="#rooms">Rooms <code>/rooms</code></a></li>
+    <li><a href="#conversations">Conversations <code>/conversations</code></a></li>
+    <li><a href="#files">Files <code>/files</code></a></li>
+    <li><a href="#events">Events <code>/events</code></a></li>
+    <li><a href="#relay">Relay <code>/relay</code></a></li>
+    <li><a href="#telemetry-metrics">Telemetry: Metrics <code>/telemetry/metrics</code></a></li>
+    <li><a href="#telemetry-reports">Telemetry: Reports <code>/telemetry/reports</code></a></li>
+  </ul>
+</nav>
+
+<h2 id="conventions">Conventions</h2>
+
+<h3 id="base-path">Base path &amp; versioning</h3>
+<p>Every controller is mapped with the route template <code>api/v{version:apiVersion}/[controller]</code> and declares <code>[ApiVersion("0")]</code>. The current and only API version is therefore <code>v0</code>; the effective base path is <strong><code>/api/v0</code></strong>. Throughout this page, endpoint paths are written relative to that base (for example, <code>/searches</code> means <code>/api/v0/searches</code>). The two telemetry controllers use the nested template <code>api/v{version:apiVersion}/telemetry/[controller]</code>, yielding <code>/api/v0/telemetry/metrics</code> and <code>/api/v0/telemetry/reports</code>.</p>
+<p class="src-ref">Source: src/slskd/**/API/**Controller*.cs (<code>[Route]</code>, <code>[ApiVersion]</code> attributes)</p>
+
+<h3 id="content-type">Content type</h3>
+<p>Controllers declare <code>[Produces("application/json")]</code> and (except the telemetry controllers and <code>RelayController</code>) <code>[Consumes("application/json")]</code>. Request bodies must be JSON; even a "plain string" body — for example the body of <span class="badge post">POST</span> <code>/conversations/{username}</code> — is a JSON-encoded string (<code>"hello"</code>, with the quotes), not raw text. Responses are JSON unless otherwise noted (the metrics endpoint can emit Prometheus <code>text/plain</code>; binary downloads use <code>application/octet-stream</code>).</p>
+
+<h3 id="casing">JSON casing</h3>
+<p>DTOs are serialized with camelCase property names. A C# property such as <code>BytesTransferred</code> appears on the wire as <code>bytesTransferred</code>; <code>Username</code> as <code>username</code>. The web client and the Swagger generator both assume camelCase (Swagger is configured with <code>DescribeAllParametersInCamelCase()</code>). Enum values, however, are generally serialized as-declared (PascalCase strings such as <code>"Download"</code>, <code>"Succeeded"</code>) and are matched case-insensitively on input.</p>
+<p class="src-ref">Source: src/slskd/Program.cs, src/web/src/lib/*.js</p>
+
+<h3 id="auth-summary">Authorization</h3>
+<p>Each action is decorated with <code>[Authorize(Policy = …, Roles = …)]</code> or <code>[AllowAnonymous]</code>. Three policies and four roles are defined:</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Constant</th><th>Value</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>AuthPolicy.Any</code></td><td><code>"Any"</code></td><td>Satisfied by a valid JWT <em>or</em> a valid API key.</td></tr>
+<tr><td><code>AuthPolicy.JwtOnly</code></td><td><code>"Jwt"</code></td><td>Requires a JWT bearer token (not an API key).</td></tr>
+<tr><td><code>AuthPolicy.ApiKeyOnly</code></td><td><code>"ApiKey"</code></td><td>Requires an API key (used by relay controller endpoints).</td></tr>
+<tr><td><code>AuthRole.Any</code></td><td><code>"ReadOnly,ReadWrite,Guest,Administrator"</code></td><td>Any authenticated role.</td></tr>
+<tr><td><code>AuthRole.AdministratorOnly</code></td><td><code>"Administrator"</code></td><td>Administrator role only.</td></tr>
+<tr><td><code>AuthRole.ReadWriteOrAdministrator</code></td><td><code>"ReadWrite,Administrator"</code></td><td>ReadWrite or Administrator.</td></tr>
+<tr><td><code>AuthRole.GuestOrAdministrator</code></td><td><code>"Guest,Administrator"</code></td><td>Guest or Administrator.</td></tr>
+</tbody>
+</table></div>
+<p>In the endpoint blocks below, the <span class="auth"><span class="badge role any">Any</span></span> badge denotes the role set required by the action's <code>Roles</code> argument; where an action additionally restricts the policy to JWT or API key, that is stated in the notes. When the action specifies a policy but no explicit <code>Roles</code>, any authenticated principal that satisfies the policy is permitted. See <a href="authentication.html">Authentication &amp; Security</a> for token acquisition, API-key configuration, and the no-auth mode.</p>
+<p class="src-ref">Source: src/slskd/Common/Authentication/AuthPolicy.cs, AuthRole.cs</p>
+
+<h3 id="url-encoded-segments">URL-encoded path segments</h3>
+<p>Many path parameters carry a value that may contain reserved characters — most often a <code>username</code> or <code>roomName</code>. These parameters are decorated with the slskd-specific <code>[UrlEncoded]</code> attribute and bound by a custom model binder that reads the <em>raw</em> request target and applies a single <code>UnescapeDataString</code> pass. Callers must <strong>percent-encode</strong> (URL-encode) such segments exactly once. The web client does this with <code>encodeURIComponent(...)</code>. This is distinct from base64 encoding (below).</p>
+<p class="src-ref">Source: src/slskd/Common/Middleware/UrlEncodingModelBinder.cs</p>
+
+<h3 id="base64-segments">Base64-encoded path segments</h3>
+<p>The <a href="#files">Files</a> controller addresses local filesystem paths through path parameters named <code>{base64SubdirectoryName}</code> and <code>{base64FileName}</code>. The value is the path <em>relative to the configured downloads/incomplete root</em>, encoded with standard Base64 (the web client uses <code>btoa(...)</code>). On the server the value is Base64-decoded and both <code>\</code> and <code>/</code> are normalized to the host directory separator before being safely combined with the root directory. No other controller uses Base64 path segments.</p>
+<p class="src-ref">Source: src/slskd/Files/API/FilesController.cs, src/web/src/lib/files.js</p>
+
+<h3 id="errors">Error responses &amp; status codes</h3>
+<p>Validation and domain errors generally return a status code with a plain-text or JSON-string message body (for example, <code>400</code> with <code>"Username and/or Password missing or invalid"</code>). Unhandled exceptions surface as <code>500</code>. Common codes used across the API:</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Status</th><th>Typical meaning in slskd</th></tr></thead>
+<tbody>
+<tr><td><span class="type">200</span> OK / <span class="type">201</span> Created / <span class="type">204</span> No Content</td><td>Success (body present / created / no body).</td></tr>
+<tr><td><span class="type">205</span> Reset Content</td><td>Server connect: a connection attempt was already in progress and was restarted.</td></tr>
+<tr><td><span class="type">207</span> Multi-Status</td><td>Download batch: some files enqueued, some failed.</td></tr>
+<tr><td><span class="type">304</span> Not Modified</td><td>Idempotent no-op (e.g. cancelling a search that is not running, joining an already-joined room).</td></tr>
+<tr><td><span class="type">400</span> Bad Request</td><td>Malformed input; message body describes the problem.</td></tr>
+<tr><td><span class="type">401</span> Unauthorized</td><td>Missing/invalid credentials, or failed login.</td></tr>
+<tr><td><span class="type">403</span> Forbidden</td><td>Authenticated but not permitted; also returned when a feature is disabled (remote config/file management) or the daemon is running as a relay <em>agent</em>.</td></tr>
+<tr><td><span class="type">404</span> Not Found</td><td>Resource absent, or user offline/blacklisted.</td></tr>
+<tr><td><span class="type">409</span> Conflict</td><td>Duplicate id, or operation already in progress (e.g. share scan).</td></tr>
+<tr><td><span class="type">429</span> Too Many Requests</td><td>A serialized operation (search / download enqueue) is already running.</td></tr>
+<tr><td><span class="type">500</span> Internal Server Error</td><td>Unexpected failure; message body contains the exception message.</td></tr>
+</tbody>
+</table></div>
+<div class="note callout warn"><span class="label">Relay agent mode</span><p>When the daemon runs as a relay <strong>agent</strong> (<code>relay.mode = agent</code>), nearly every user-facing controller action short-circuits with <span class="type">403</span> Forbidden via an internal <code>Program.IsRelayAgent</code> check. In agent mode the daemon's UI/API surface for searches, transfers, users, rooms, conversations, etc. is intentionally disabled. See <a href="relay.html">Relay Protocol</a>.</p></div>
+
+<h3 id="pagination">Pagination &amp; filtering</h3>
+<p>Pagination is not uniform across the API. The endpoints that support it use <code>offset</code> + <code>limit</code> query parameters (Events, and the Telemetry reports leaderboard/exceptions/directories). The Events list additionally returns a total-record count in the <code>X-Total-Count</code> response header. Time-windowed report endpoints accept <code>start</code>/<code>end</code> (ISO-8601 <span class="type">DateTime</span>, UTC) and frequently a <code>direction</code> and/or <code>username</code> filter. Most collection endpoints (transfers, searches, conversations) return the full set and rely on client-side filtering.</p>
+
+<h3 id="url-base">Reverse-proxy prefix (<code>url_base</code>)</h3>
+<p>When slskd is hosted behind a path prefix, the option <code>web.urlBase</code> is applied via ASP.NET <code>UsePathBase</code>. All routes documented here are then served beneath that prefix — e.g. with <code>urlBase = /slskd</code>, the searches list is <code>GET /slskd/api/v0/searches</code>. The URL-encoded model binder is prefix-aware. The web client computes its base URL as <code>${urlBase}/api/v0</code>.</p>
+<p class="src-ref">Source: src/slskd/Program.cs (<code>UsePathBase</code>), src/web/src/config.js</p>
+
+<!-- ============================================================ APPLICATION -->
+<h2 id="application">Application — <code>/application</code></h2>
+<p>Application lifecycle, version, diagnostics. Maps to <code>ApplicationController</code>.</p>
+
+<h3 id="application-get-state">Get application state</h3>
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/application</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Returns the current application <code>State</code> object (server connection, current user, version/update status, shares, relay, pending restart, etc.). See <a href="data-model.html">Data Model &amp; Types</a> and <a href="realtime-api.html">Real-Time API &amp; Events</a> (the same object is pushed over SignalR).</p>
+
+<h3 id="application-shutdown">Shut down</h3>
+<div class="endpoint"><span class="badge delete">DELETE</span><span class="path">/api/v0/application</span><span class="auth"><span class="badge role admin">Administrator</span></span></div>
+<p>Cancels the master token, stops the host and exits the process (<code>Environment.Exit(0)</code>) after a 500&nbsp;ms delay. <strong>Policy <code>JwtOnly</code></strong> + Administrator role. Returns <span class="type">204</span>.</p>
+
+<h3 id="application-restart">Restart</h3>
+<div class="endpoint"><span class="badge put">PUT</span><span class="path">/api/v0/application</span><span class="auth"><span class="badge role admin">Administrator</span></span></div>
+<p>Starts a new instance of the executable with the same command line, then stops the host. <strong>Policy <code>JwtOnly</code></strong> + Administrator. Returns <span class="type">204</span>.</p>
+
+<h3 id="application-version">Get version</h3>
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/application/version</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Returns the running semantic version (<code>Program.SemanticVersion</code>) as a JSON string.</p>
+
+<h3 id="application-version-latest">Check for updates</h3>
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/application/version/latest</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<div class="table-wrap"><table>
+<thead><tr><th>Query</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
+<tbody><tr><td><code>forceCheck</code></td><td><span class="type">bool</span></td><td><code>false</code></td><td>If true, triggers a fresh remote version check before returning.</td></tr></tbody>
+</table></div>
+<p>Returns the cached version/update state (latest version, whether an update is available).</p>
+
+<h3 id="application-gc">Collect garbage</h3>
+<div class="endpoint"><span class="badge post">POST</span><span class="path">/api/v0/application/gc</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Forces a .NET garbage collection. Returns <span class="type">200</span>.</p>
+
+<h3 id="application-dump">Dump memory</h3>
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/application/dump</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Captures a process memory dump and returns it as a file download (<code>application/octet-stream</code>, filename <code>slskd.dmp</code>).</p>
+
+<h3 id="application-loopback">Loopback (diagnostic)</h3>
+<div class="endpoint"><span class="badge post">POST</span><span class="path">/api/v0/application/loopback</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Logs the posted JSON body at <em>Information</em> level and returns <span class="type">200</span>. A diagnostic no-op.</p>
+<p class="src-ref">Source: src/slskd/Core/API/Controllers/ApplicationController.cs</p>
+
+<!-- ============================================================ LOGS -->
+<h2 id="logs">Logs — <code>/logs</code></h2>
+<h3 id="logs-get">Get recent logs</h3>
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/logs</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Returns the in-memory ring buffer of the most recent application log records (<code>Program.LogBuffer</code>) as a JSON array. The same records are streamed live over the SignalR logs hub — see <a href="realtime-api.html">Real-Time API &amp; Events</a>.</p>
+<p class="src-ref">Source: src/slskd/Core/API/Controllers/LogsController.cs</p>
+
+<!-- ============================================================ OPTIONS -->
+<h2 id="options">Options — <code>/options</code></h2>
+<p>Runtime configuration. The full <code>Options</code> object is documented in <a href="data-model.html">Data Model &amp; Types</a>; secrets are redacted (<code>Redact()</code>) on every read. Several actions require <code>remoteConfiguration</code> to be enabled and return <span class="type">403</span> otherwise.</p>
+
+<h3 id="options-current">Get current options</h3>
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/options</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Returns the current, redacted effective <code>Options</code>.</p>
+
+<h3 id="options-patch">Apply options overlay</h3>
+<div class="endpoint"><span class="badge patch">PATCH</span><span class="path">/api/v0/options</span><span class="auth"><span class="badge role admin">Administrator</span></span></div>
+<p>Applies an in-memory configuration overlay (an <code>OptionsOverlay</code> JSON body) over the current options. Requires <code>remoteConfiguration = true</code> (else <span class="type">403</span>). Validates the overlay; on failure returns <span class="type">400</span> with the validation message. On success returns the redacted overlay. A <code>null</code> body returns <span class="type">204</span>.</p>
+
+<h3 id="options-startup">Get startup options</h3>
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/options/startup</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Returns the redacted options captured at process start (<code>OptionsAtStartup</code>), before any overlay or hot-reload.</p>
+
+<h3 id="options-debug">Get configuration debug view</h3>
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/options/debug</span><span class="auth"><span class="badge role admin">Administrator</span></span></div>
+<p><strong>Policy <code>JwtOnly</code></strong> + Administrator. Returns the .NET configuration provider debug view (which key came from which source) as a string. Requires both <code>debug = true</code> (at startup) and <code>remoteConfiguration = true</code>; otherwise <span class="type">403</span>.</p>
+
+<h3 id="options-yaml-location">Get YAML file location</h3>
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/options/yaml/location</span><span class="auth"><span class="badge role admin">Administrator</span></span></div>
+<p><strong>Policy <code>JwtOnly</code></strong> + Administrator. Returns the absolute path of the active configuration file. Requires <code>remoteConfiguration = true</code>.</p>
+
+<h3 id="options-yaml-get">Get YAML file</h3>
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/options/yaml</span><span class="auth"><span class="badge role admin">Administrator</span></span></div>
+<p><strong>Policy <code>JwtOnly</code></strong> + Administrator. Returns the raw contents of the configuration YAML file. Requires <code>remoteConfiguration = true</code>.</p>
+
+<h3 id="options-yaml-put">Update YAML file</h3>
+<div class="endpoint"><span class="badge put">PUT</span><span class="path">/api/v0/options/yaml</span><span class="auth"><span class="badge role admin">Administrator</span></span></div>
+<p><strong>Policy <code>JwtOnly</code></strong> + Administrator. Body: the new YAML as a JSON string. Requires <code>remoteConfiguration = true</code>. Validates the YAML (deserialize + <code>TryValidate</code>); on failure returns <span class="type">400</span> with the error. On success, backs up the existing file to <code>&lt;file&gt;.bak</code>, writes the new contents, and — if config-watch is disabled — sets <code>pendingRestart</code>. Returns <span class="type">200</span>.</p>
+
+<h3 id="options-yaml-validate">Validate YAML</h3>
+<div class="endpoint"><span class="badge post">POST</span><span class="path">/api/v0/options/yaml/validate</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Body: candidate YAML as a JSON string. Requires <code>remoteConfiguration = true</code> (else <span class="type">403</span>). Returns <span class="type">200</span> with an empty body if valid, or <span class="type">200</span> with the validation error string if invalid. (Note: validation <em>failures</em> are returned as <code>200 + message</code>, not <code>400</code>.)</p>
+<p class="src-ref">Source: src/slskd/Core/API/Controllers/OptionsController.cs</p>
+
+<!-- ============================================================ SERVER -->
+<h2 id="server">Server — <code>/server</code></h2>
+<p>Controls and reports the connection to the central Soulseek server. Forbidden in relay-agent mode.</p>
+
+<h3 id="server-get">Get server state</h3>
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/server</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Returns the <code>ServerState</code> (address, connection state, logged-in flag, etc.). See <a href="data-model.html">Data Model &amp; Types</a>.</p>
+
+<h3 id="server-connect">Connect</h3>
+<div class="endpoint"><span class="badge put">PUT</span><span class="path">/api/v0/server</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Starts (or, if already running, restarts) the connection watchdog that establishes and maintains the server connection. Returns <span class="type">200</span> on a fresh start, or <span class="type">205</span> Reset Content if a connection attempt was already in progress and has been restarted. <span class="type">403</span> in relay-agent mode.</p>
+
+<h3 id="server-disconnect">Disconnect</h3>
+<div class="endpoint"><span class="badge delete">DELETE</span><span class="path">/api/v0/server</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Body: an optional disconnect message as a JSON string. Stops the watchdog (aborting reconnect) and, if connected, disconnects with an <code>IntentionalDisconnectException</code> so the watchdog will not auto-reconnect. Returns <span class="type">204</span>. <span class="type">403</span> in relay-agent mode.</p>
+<p class="src-ref">Source: src/slskd/Core/API/Controllers/ServerController.cs</p>
+
+<!-- ============================================================ SESSION -->
+<h2 id="session">Session — <code>/session</code></h2>
+<p>Login and token validation. Covered in depth in <a href="authentication.html">Authentication &amp; Security</a>; summarized here for completeness.</p>
+
+<h3 id="session-check">Check session</h3>
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/session</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>A no-op that returns <span class="type">200</span> when the supplied credentials are valid and <span class="type">401</span> otherwise. Used by clients to detect an expired token on load.</p>
+
+<h3 id="session-enabled">Is security enabled</h3>
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/session/enabled</span><span class="auth"><span class="badge role any">Anonymous</span></span></div>
+<p><code>[AllowAnonymous]</code>. Returns a JSON boolean: <code>true</code> if web authentication is enabled, <code>false</code> if it is disabled (<code>web.authentication.disabled</code>).</p>
+
+<h3 id="session-login">Log in</h3>
+<div class="endpoint"><span class="badge post">POST</span><span class="path">/api/v0/session</span><span class="auth"><span class="badge role any">Anonymous</span></span></div>
+<p><code>[AllowAnonymous]</code>. Request body <code>LoginRequest</code>:</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>username</code></td><td><span class="type">string</span></td><td>Web UI username.</td></tr>
+<tr><td><code>password</code></td><td><span class="type">string</span></td><td>Web UI password.</td></tr>
+</tbody>
+</table></div>
+<p>On success returns <span class="type">200</span> with a <code>TokenResponse</code>: <code>token</code> (the JWT string), <code>tokenType</code> (<code>"Bearer"</code>), <code>name</code>, <code>issued</code>, <code>expires</code>, <code>notBefore</code> (Unix seconds). Missing fields → <span class="type">400</span>; bad credentials → <span class="type">401</span>; running headless → <span class="type">403</span>.</p>
+<pre><code>{
+  "token": "eyJhbGciOi…",
+  "tokenType": "Bearer",
+  "name": "slskd",
+  "issued": 1750000000,
+  "expires": 1750604800,
+  "notBefore": 1750000000
+}</code></pre>
+<p class="src-ref">Source: src/slskd/Core/API/Controllers/SessionController.cs, DTO/LoginRequest.cs, DTO/TokenResponse.cs</p>
+
+<!-- ============================================================ SEARCHES -->
+<h2 id="searches">Searches — <code>/searches</code></h2>
+<p>Start and inspect distributed network searches. Behaviour and the <a href="data-model.html#search">Search</a> / <a href="data-model.html#response">SearchResponse</a> shapes are detailed in <a href="search.html">Search</a>. Forbidden in relay-agent mode. Concurrent <span class="badge post">POST</span> requests are serialized — a second simultaneous start returns <span class="type">429</span>.</p>
+
+<h3 id="searches-list">List searches</h3>
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/searches</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Returns all active and completed searches (without responses).</p>
+
+<h3 id="searches-post">Start a search</h3>
+<div class="endpoint"><span class="badge post">POST</span><span class="path">/api/v0/searches</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Request body <code>SearchRequest</code>:</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Field</th><th>Type</th><th>Req.</th><th>Default</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>id</code></td><td><span class="type">uuid?</span></td><td>—</td><td>random</td><td>Client-chosen search id; generated if omitted.</td></tr>
+<tr><td><code>searchText</code></td><td><span class="type">string</span></td><td>yes</td><td>—</td><td>Query text. Must be non-empty/non-whitespace.</td></tr>
+<tr><td><code>fileLimit</code></td><td><span class="type">int?</span></td><td>—</td><td>10000</td><td>Max file results before the search is considered complete.</td></tr>
+<tr><td><code>responseLimit</code></td><td><span class="type">int?</span></td><td>—</td><td>100</td><td>Max responses before completion.</td></tr>
+<tr><td><code>filterResponses</code></td><td><span class="type">bool?</span></td><td>—</td><td>true</td><td>Whether to apply the response filters below.</td></tr>
+<tr><td><code>minimumResponseFileCount</code></td><td><span class="type">int?</span></td><td>—</td><td>1</td><td>Min files in a response to accept it.</td></tr>
+<tr><td><code>minimumPeerUploadSpeed</code></td><td><span class="type">int?</span></td><td>—</td><td>0</td><td>Min peer upload speed to accept a response.</td></tr>
+<tr><td><code>maximumPeerQueueLength</code></td><td><span class="type">int?</span></td><td>—</td><td>1000000</td><td>Max peer queue length to accept a response.</td></tr>
+<tr><td><code>searchTimeout</code></td><td><span class="type">int?</span></td><td>—</td><td>15</td><td>Seconds of inactivity (since last response) before completion. Minimum 5.</td></tr>
+</tbody>
+</table></div>
+<p>Returns <span class="type">200</span> with the <a href="data-model.html#search">Search</a> on completion. Malformed request or duplicate token → <span class="type">400</span>; an in-progress conflict → <span class="type">409</span>; another start already running → <span class="type">429</span>; abnormal termination → <span class="type">500</span>.</p>
+<pre><code>POST /api/v0/searches
+{ "id": "2f1c…", "searchText": "aphex twin flac" }</code></pre>
+
+<h3 id="searches-get">Get a search</h3>
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/searches/{id}</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<div class="table-wrap"><table>
+<thead><tr><th>Param</th><th>In</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>id</code></td><td>path</td><td><span class="type">uuid</span></td><td>Search id.</td></tr>
+<tr><td><code>includeResponses</code></td><td>query</td><td><span class="type">bool</span></td><td>Default <code>false</code>. Include the responses array in the result.</td></tr>
+</tbody>
+</table></div>
+<p>Returns the <a href="data-model.html#search">Search</a>, or <span class="type">404</span> if not found.</p>
+
+<h3 id="searches-responses">Get search responses</h3>
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/searches/{id}/responses</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Returns just the <a href="data-model.html#response">SearchResponse</a> array for the search. <span class="type">404</span> if not found.</p>
+
+<h3 id="searches-cancel">Stop a search</h3>
+<div class="endpoint"><span class="badge put">PUT</span><span class="path">/api/v0/searches/{id}</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Cancels an in-progress search. Returns <span class="type">200</span>; <span class="type">404</span> if the search id is unknown. (A search that is not running is effectively a no-op; the documented <span class="type">304</span> is reserved for the not-in-progress case.)</p>
+
+<h3 id="searches-delete">Delete a search</h3>
+<div class="endpoint"><span class="badge delete">DELETE</span><span class="path">/api/v0/searches/{id}</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Deletes the stored search record. Returns <span class="type">204</span>, or <span class="type">404</span> if not found.</p>
+<p class="src-ref">Source: src/slskd/Search/API/Controllers/SearchesController.cs, DTO/SearchRequest.cs</p>
+
+<!-- ============================================================ TRANSFERS -->
+<h2 id="transfers">Transfers — <code>/transfers</code></h2>
+<p>Downloads and uploads, plus the batch download API. State machine, queue semantics, and the <a href="data-model.html#transfer">Transfer</a> shape are in <a href="transfers.html">Transfers &amp; Queueing</a>; this section documents the HTTP surface. The <code>{username}</code> segment is URL-encoded. Forbidden in relay-agent mode. Download enqueue (single and batch) is serialized via a 2-slot limiter; overflow returns <span class="type">429</span>.</p>
+<p>List endpoints return data grouped by user then directory as <code>UserResponse[]</code> — each with <code>username</code> and a <code>directories</code> array of <code>{ directory, fileCount, files: Transfer[] }</code>.</p>
+
+<h3 id="transfers-downloads-list">List all downloads</h3>
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/transfers/downloads</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<div class="table-wrap"><table><thead><tr><th>Query</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
+<tbody><tr><td><code>includeRemoved</code></td><td><span class="type">bool</span></td><td><code>false</code></td><td>Include soft-removed records.</td></tr></tbody></table></div>
+<p>Returns <code>UserResponse[]</code> grouped by user and directory.</p>
+
+<h3 id="transfers-downloads-user">List a user's downloads</h3>
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/transfers/downloads/{username}</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Returns a single <code>UserResponse</code>; <span class="type">404</span> if the user has no downloads.</p>
+
+<h3 id="transfers-download-get">Get a download</h3>
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/transfers/downloads/{username}/{id}</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p><code>{id}</code> is the download's <span class="type">uuid</span>. Returns the <a href="data-model.html#transfer">Transfer</a>; <span class="type">400</span> if id is not a GUID; <span class="type">404</span> if not found.</p>
+
+<h3 id="transfers-download-position">Get place in remote queue</h3>
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/transfers/downloads/{username}/{id}/position</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Requests the current place-in-queue of the download from the remote peer. Returns the updated <a href="data-model.html#transfer">Transfer</a>; <span class="type">404</span> if the download is unknown or the user is blacklisted; <span class="type">400</span> on a bad GUID.</p>
+
+<h3 id="transfers-download-cancel">Cancel / remove a download</h3>
+<div class="endpoint"><span class="badge delete">DELETE</span><span class="path">/api/v0/transfers/downloads/{username}/{id}</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<div class="table-wrap"><table><thead><tr><th>Query</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
+<tbody><tr><td><code>remove</code></td><td><span class="type">bool</span></td><td><code>false</code></td><td>Also remove the tracked record after cancellation.</td></tr></tbody></table></div>
+<p>Returns <span class="type">204</span>; <span class="type">404</span> if not found; <span class="type">400</span> on a bad GUID.</p>
+
+<h3 id="transfers-downloads-clear">Clear completed downloads</h3>
+<div class="endpoint"><span class="badge delete">DELETE</span><span class="path">/api/v0/transfers/downloads/all/completed</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Removes every non-removed download in a completed state (succeeded or failed). Returns <span class="type">204</span>; <span class="type">500</span> on error.</p>
+
+<h3 id="transfers-downloads-enqueue">Enqueue downloads (obsolete)</h3>
+<div class="endpoint"><span class="badge post">POST</span><span class="path">/api/v0/transfers/downloads/{username}</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p><strong>Obsolete</strong> — prefer the batch endpoint below. Body: an array of <code>QueueDownloadRequest</code> (<code>{ filename, size }</code>, <code>filename</code> required, <code>size</code> a <span class="type">int64</span>). Validates that the list is non-empty, contains no nulls, and that no filename contains path-traversal segments. Returns <span class="type">201</span> with <code>{ "enqueued": [...], "failed": [...] }</code>. Empty/invalid list → <span class="type">400</span>; overflow → <span class="type">429</span>; user offline → handled as error; unexpected → <span class="type">500</span>.</p>
+<pre><code>POST /api/v0/transfers/downloads/RemoteUser
+[ { "filename": "@@abc\\Music\\track.flac", "size": 41557123 } ]</code></pre>
+
+<h3 id="transfers-downloads-batch">Enqueue a download batch</h3>
+<div class="endpoint"><span class="badge post">POST</span><span class="path">/api/v0/transfers/downloads/batches</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>The preferred enqueue API. Request body <code>QueueDownloadBatchRequest</code>:</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Field</th><th>Type</th><th>Req.</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>id</code></td><td><span class="type">string (uuid)</span></td><td>—</td><td>Batch id; generated if omitted. Must be a valid GUID when present.</td></tr>
+<tr><td><code>searchId</code></td><td><span class="type">string (uuid)</span></td><td>—</td><td>Associated search id, if any.</td></tr>
+<tr><td><code>username</code></td><td><span class="type">string</span></td><td>yes</td><td>Source user (1–500 chars, non-blank).</td></tr>
+<tr><td><code>files</code></td><td><span class="type">EnqueueDownloadBatchItem[]</span></td><td>yes</td><td>≥1 item; <code>filename</code> (required, non-blank, non-traversing) and <code>size</code> (<span class="type">int64</span>, required, ≥0). Filenames must be unique within the batch.</td></tr>
+<tr><td><code>options</code></td><td><span class="type">EnqueueDownloadBatchOptions</span></td><td>—</td><td><code>destination</code> (relative, non-traversing subdir under the downloads root) and an optional <code>externalId</code>.</td></tr>
+</tbody>
+</table></div>
+<p>Response body <code>QueueDownloadBatchResponse</code>: <code>{ batch: Batch, failures: [{ filename, message }] }</code>. Status reflects partial success:</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Status</th><th>Condition</th></tr></thead>
+<tbody>
+<tr><td><span class="type">201</span></td><td>All files enqueued.</td></tr>
+<tr><td><span class="type">207</span></td><td>Some enqueued, some failed (both <code>batch</code> and <code>failures</code> populated).</td></tr>
+<tr><td><span class="type">200</span></td><td>All files failed (batch record created but empty).</td></tr>
+<tr><td><span class="type">400</span></td><td>Null file, repeated filename, or invalid GUID.</td></tr>
+<tr><td><span class="type">404</span></td><td>User offline.</td></tr>
+<tr><td><span class="type">409</span></td><td>A batch with the supplied id already exists.</td></tr>
+<tr><td><span class="type">429</span></td><td>Enqueue already in progress.</td></tr>
+<tr><td><span class="type">500</span></td><td>Unexpected error.</td></tr>
+</tbody>
+</table></div>
+<pre><code>POST /api/v0/transfers/downloads/batches
+{
+  "username": "RemoteUser",
+  "searchId": "2f1c…",
+  "files": [
+    { "filename": "@@abc\\Music\\01.flac", "size": 41557123 },
+    { "filename": "@@abc\\Music\\02.flac", "size": 39114002 }
+  ],
+  "options": { "destination": "RemoteUser/Album" }
+}</code></pre>
+
+<h3 id="transfers-batch-get">Get a download batch</h3>
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/transfers/downloads/batches/{id}</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Returns the <code>Batch</code> (with its included transfers) for the given id. <span class="type">400</span> if id is not a GUID; <span class="type">404</span> if absent; <span class="type">500</span> on error.</p>
+
+<h3 id="transfers-uploads-list">List all uploads</h3>
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/transfers/uploads</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<div class="table-wrap"><table><thead><tr><th>Query</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
+<tbody><tr><td><code>includeRemoved</code></td><td><span class="type">bool</span></td><td><code>false</code></td><td>Include soft-removed records.</td></tr></tbody></table></div>
+<p>Returns <code>UserResponse[]</code> grouped by user and directory.</p>
+
+<h3 id="transfers-uploads-user">List a user's uploads</h3>
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/transfers/uploads/{username}</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Returns a single <code>UserResponse</code>; <span class="type">404</span> if the user has no uploads.</p>
+
+<h3 id="transfers-upload-get">Get an upload</h3>
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/transfers/uploads/{username}/{id}</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p><code>{id}</code> is the upload's <span class="type">uuid</span>. Returns the <a href="data-model.html#transfer">Transfer</a>; <span class="type">400</span> on a bad GUID; <span class="type">404</span> if not found.</p>
+
+<h3 id="transfers-upload-cancel">Cancel / remove an upload</h3>
+<div class="endpoint"><span class="badge delete">DELETE</span><span class="path">/api/v0/transfers/uploads/{username}/{id}</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<div class="table-wrap"><table><thead><tr><th>Query</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
+<tbody><tr><td><code>remove</code></td><td><span class="type">bool</span></td><td><code>false</code></td><td>Also remove the tracked record after cancellation.</td></tr></tbody></table></div>
+<p>Returns <span class="type">204</span>; <span class="type">404</span> if not found; <span class="type">400</span> on a bad GUID.</p>
+
+<h3 id="transfers-uploads-clear">Clear completed uploads</h3>
+<div class="endpoint"><span class="badge delete">DELETE</span><span class="path">/api/v0/transfers/uploads/all/completed</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Removes every non-removed upload in a completed state. Returns <span class="type">204</span>; <span class="type">500</span> on error.</p>
+<p class="src-ref">Source: src/slskd/Transfers/API/Controllers/TransfersController.cs, DTO/QueueDownloadRequest.cs, DTO/QueueDownloadBatchRequest.cs, DTO/QueueDownloadBatchResponse.cs</p>
+
+<!-- ============================================================ USERS -->
+<h2 id="users">Users — <code>/users</code></h2>
+<p>Per-user information, status, address, and remote browsing. <code>{username}</code> is URL-encoded. Blacklisted or offline users yield <span class="type">404</span>. Forbidden in relay-agent mode. See <a href="users-rooms.html">Users, Rooms &amp; Chat</a>.</p>
+
+<h3 id="users-info">Get user info</h3>
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/users/{username}/info</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Returns the peer's <a href="data-model.html#user-info">Info</a> (description, picture, upload slots, queue length, free-slot flag). <span class="type">404</span> if offline/blacklisted.</p>
+
+<h3 id="users-status">Get user status</h3>
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/users/{username}/status</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Returns the user's <a href="data-model.html#user-status">Status</a> (presence, privileged flag). <span class="type">404</span> if offline/blacklisted.</p>
+
+<h3 id="users-endpoint">Get user endpoint</h3>
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/users/{username}/endpoint</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Returns the peer's <code>IPEndPoint</code> (<code>{ address, port, ... }</code>). <span class="type">404</span> if offline/blacklisted.</p>
+
+<h3 id="users-browse">Browse a user's shares</h3>
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/users/{username}/browse</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Performs a full browse and returns the peer's shared <a href="data-model.html#directory">Directory</a> tree. Browse progress is tracked for ~5&nbsp;s after completion (see status, below). <span class="type">404</span> if offline/blacklisted.</p>
+
+<h3 id="users-browse-status">Browse status</h3>
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/users/{username}/browse/status</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Returns the progress of an in-flight browse as a <span class="type">decimal</span> percentage. <span class="type">404</span> if no browse is in progress for the user.</p>
+
+<h3 id="users-directory">Get a user's directory contents</h3>
+<div class="endpoint"><span class="badge post">POST</span><span class="path">/api/v0/users/{username}/directory</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Request body <code>DirectoryContentsRequest</code>: <code>{ "directory": "..." }</code> — the remote directory path to fetch. Returns the directory's contents as a <a href="data-model.html#directory">Directory</a> set. Missing/empty <code>directory</code> → <span class="type">400</span>; offline/blacklisted → <span class="type">404</span>.</p>
+<p class="src-ref">Source: src/slskd/Users/API/Controllers/UsersController.cs, DTO/DirectoryContentsRequest.cs</p>
+
+<!-- ============================================================ SHARES -->
+<h2 id="shares">Shares — <code>/shares</code></h2>
+<p>This daemon's own shared content and share-scan control. The <a href="data-model.html#share">Share</a> and <a href="data-model.html#directory">Directory</a> shapes are in the data model; behaviour is in <a href="shares.html">Shares &amp; Browsing</a>.</p>
+
+<h3 id="shares-list">List shares</h3>
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/shares</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Returns a dictionary keyed by host name, each value a list of that host's <a href="data-model.html#share">Share</a> definitions: <code>{ "&lt;hostName&gt;": [ Share, … ] }</code>.</p>
+
+<h3 id="shares-get">Get a share</h3>
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/shares/{id}</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Returns the <a href="data-model.html#share">Share</a> with the matching <code>id</code> across all hosts. <span class="type">404</span> if not found.</p>
+
+<h3 id="shares-contents">Browse all shared contents</h3>
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/shares/contents</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Returns the full set of shared <a href="data-model.html#directory">Directory</a> records (the same tree a remote peer would receive on browse).</p>
+
+<h3 id="shares-id-contents">Browse one share's contents</h3>
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/shares/{id}/contents</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Returns the <a href="data-model.html#directory">Directory</a> records belonging to the share with the given id. <span class="type">404</span> if not found.</p>
+
+<h3 id="shares-scan">Start a share scan</h3>
+<div class="endpoint"><span class="badge put">PUT</span><span class="path">/api/v0/shares</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Initiates a rescan of the configured shares. Returns <span class="type">200</span>; <span class="type">409</span> if a scan is already running.</p>
+
+<h3 id="shares-scan-cancel">Cancel a share scan</h3>
+<div class="endpoint"><span class="badge delete">DELETE</span><span class="path">/api/v0/shares</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Cancels the running scan. Returns <span class="type">204</span>; <span class="type">404</span> if no scan was in progress.</p>
+<p class="src-ref">Source: src/slskd/Shares/API/Controllers/SharesController.cs</p>
+
+<!-- ============================================================ ROOMS -->
+<h2 id="rooms">Rooms — <code>/rooms</code></h2>
+<p>Chat-room membership and messaging. <code>{roomName}</code> is URL-encoded. Forbidden in relay-agent mode. See <a href="users-rooms.html">Users, Rooms &amp; Chat</a> for the <a href="data-model.html#room">Room</a>, <a href="data-model.html#room-message">RoomMessage</a>, and user-data shapes.</p>
+
+<h3 id="rooms-available">List available rooms</h3>
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/rooms/available</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Fetches the server's room list and returns a combined <code>RoomInfoResponse[]</code> spanning public, private and owned rooms, each carrying <code>name</code>, user count, <code>isPrivate</code>, <code>isOwned</code>, and <code>isModerated</code> flags.</p>
+
+<h3 id="rooms-joined">List joined rooms</h3>
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/rooms/joined</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Returns the names of currently-joined rooms (the tracker's room keys).</p>
+
+<h3 id="rooms-join">Join a room</h3>
+<div class="endpoint"><span class="badge post">POST</span><span class="path">/api/v0/rooms/joined</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Body: the room name as a JSON string. Returns <span class="type">201</span> with the joined <a href="data-model.html#room">Room</a> (users + messages). Already joined → <span class="type">200</span>. If the server rejects the join → <span class="type">403</span>.</p>
+
+<h3 id="rooms-get">Get a joined room</h3>
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/rooms/joined/{roomName}</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Returns the <a href="data-model.html#room">Room</a> with users and messages mapped (each marked <code>self</code> where appropriate). <span class="type">404</span> if not joined.</p>
+
+<h3 id="rooms-leave">Leave a room</h3>
+<div class="endpoint"><span class="badge delete">DELETE</span><span class="path">/api/v0/rooms/joined/{roomName}</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Returns <span class="type">204</span>; <span class="type">404</span> if not currently joined.</p>
+
+<h3 id="rooms-users">Get room users</h3>
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/rooms/joined/{roomName}/users</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Returns the room's user list as <code>UserDataResponse[]</code>. <span class="type">404</span> if not joined.</p>
+
+<h3 id="rooms-messages-get">Get room messages</h3>
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/rooms/joined/{roomName}/messages</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Returns the room's tracked messages as <code>RoomMessageResponse[]</code>. <span class="type">404</span> if not joined.</p>
+
+<h3 id="rooms-messages-post">Send a room message</h3>
+<div class="endpoint"><span class="badge post">POST</span><span class="path">/api/v0/rooms/joined/{roomName}/messages</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Body: the message text as a JSON string. Returns <span class="type">201</span>; <span class="type">404</span> if not joined.</p>
+
+<h3 id="rooms-ticker">Set room ticker</h3>
+<div class="endpoint"><span class="badge post">POST</span><span class="path">/api/v0/rooms/joined/{roomName}/ticker</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Body: the ticker text as a JSON string. Sets this user's room ticker. Returns <span class="type">201</span>; <span class="type">404</span> if not joined.</p>
+
+<h3 id="rooms-members">Add a private-room member</h3>
+<div class="endpoint"><span class="badge post">POST</span><span class="path">/api/v0/rooms/joined/{roomName}/members</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Body: the username to add as a JSON string. Adds a member to a private room. Returns <span class="type">201</span>; <span class="type">404</span> if not joined.</p>
+<p class="src-ref">Source: src/slskd/Messaging/API/Controllers/RoomsController.cs</p>
+
+<!-- ============================================================ CONVERSATIONS -->
+<h2 id="conversations">Conversations — <code>/conversations</code></h2>
+<p>Private (1:1) message conversations. <code>{username}</code> is URL-encoded. Forbidden in relay-agent mode. See <a href="users-rooms.html">Users, Rooms &amp; Chat</a> for the <a href="data-model.html#conversation">Conversation</a> and <a href="data-model.html#private-message">PrivateMessage</a> shapes.</p>
+
+<h3 id="conversations-list">List conversations</h3>
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/conversations</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<div class="table-wrap"><table><thead><tr><th>Query</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>includeInactive</code></td><td><span class="type">bool</span></td><td><code>false</code></td><td>Include closed/inactive conversations.</td></tr>
+<tr><td><code>unAcknowledgedOnly</code></td><td><span class="type">bool</span></td><td><code>false</code></td><td>Only conversations with unacknowledged messages.</td></tr>
+</tbody></table></div>
+<p>Returns <code>Conversation[]</code>.</p>
+
+<h3 id="conversations-get">Get a conversation</h3>
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/conversations/{username}</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<div class="table-wrap"><table><thead><tr><th>Query</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
+<tbody><tr><td><code>includeMessages</code></td><td><span class="type">bool</span></td><td><code>true</code></td><td>Include the message list in the result.</td></tr></tbody></table></div>
+<p>Returns the <a href="data-model.html#conversation">Conversation</a>; <span class="type">404</span> if none exists.</p>
+
+<h3 id="conversations-messages">Get conversation messages</h3>
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/conversations/{username}/messages</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<div class="table-wrap"><table><thead><tr><th>Query</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
+<tbody><tr><td><code>unAcknowledgedOnly</code></td><td><span class="type">bool</span></td><td><code>false</code></td><td>Only unacknowledged messages.</td></tr></tbody></table></div>
+<p>Returns <code>PrivateMessage[]</code>; <span class="type">404</span> if the conversation does not exist.</p>
+
+<h3 id="conversations-send">Send a private message</h3>
+<div class="endpoint"><span class="badge post">POST</span><span class="path">/api/v0/conversations/{username}</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Body: the message text as a JSON string. Returns <span class="type">201</span>; empty message → <span class="type">400</span>. If the recipient is blacklisted, the call returns <span class="type">200</span> without sending.</p>
+
+<h3 id="conversations-ack-all">Acknowledge all messages</h3>
+<div class="endpoint"><span class="badge put">PUT</span><span class="path">/api/v0/conversations/{username}</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Marks every message in the conversation acknowledged. Returns <span class="type">200</span>; <span class="type">404</span> if no conversation.</p>
+
+<h3 id="conversations-ack-one">Acknowledge a message</h3>
+<div class="endpoint"><span class="badge put">PUT</span><span class="path">/api/v0/conversations/{username}/{id}</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p><code>{id}</code> is the message's <span class="type">int32</span> id. Marks a single message acknowledged. Returns <span class="type">200</span>; <span class="type">404</span> if the conversation or message is not found.</p>
+
+<h3 id="conversations-close">Close a conversation</h3>
+<div class="endpoint"><span class="badge delete">DELETE</span><span class="path">/api/v0/conversations/{username}</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Removes (closes) the active conversation. Returns <span class="type">204</span>; <span class="type">404</span> if not found.</p>
+<p class="src-ref">Source: src/slskd/Messaging/API/Controllers/ConversationsController.cs</p>
+
+<!-- ============================================================ FILES -->
+<h2 id="files">Files — <code>/files</code></h2>
+<p>Local filesystem browsing and management of the daemon's <strong>downloads</strong> and <strong>incomplete</strong> directories. The two roots are addressed by the literal path segments <code>downloads</code> and <code>incomplete</code>. Subdirectory/file path parameters are <strong>Base64-encoded</strong> paths relative to the root (see <a href="#base64-segments">Base64-encoded path segments</a>). Listings return a <a href="#files-fsdir">FilesystemDirectory</a>. Delete operations require <code>remoteFileManagement = true</code>; otherwise <span class="type">403</span>.</p>
+
+<h4 id="files-fsdir">FilesystemDirectory / FilesystemFile</h4>
+<div class="table-wrap"><table>
+<thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>name</code></td><td><span class="type">string</span></td><td>Directory or file name.</td></tr>
+<tr><td><code>fullName</code></td><td><span class="type">string</span></td><td>Absolute host path.</td></tr>
+<tr><td><code>length</code></td><td><span class="type">int64</span></td><td>File size in bytes (file only).</td></tr>
+<tr><td><code>attributes</code></td><td><span class="type">FileAttributes</span></td><td>OS file attributes.</td></tr>
+<tr><td><code>createdAt</code></td><td><span class="type">datetime</span></td><td>Creation time (UTC).</td></tr>
+<tr><td><code>modifiedAt</code></td><td><span class="type">datetime</span></td><td>Last write time (UTC).</td></tr>
+<tr><td><code>files</code></td><td><span class="type">FilesystemFile[]</span></td><td>Files in the directory (directory only).</td></tr>
+<tr><td><code>directories</code></td><td><span class="type">FilesystemDirectory[]</span></td><td>Subdirectories (directory only).</td></tr>
+</tbody>
+</table></div>
+
+<h3 id="files-downloads-list">List downloads root</h3>
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/files/downloads/directories</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<div class="table-wrap"><table><thead><tr><th>Query</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
+<tbody><tr><td><code>recursive</code></td><td><span class="type">bool</span></td><td><code>false</code></td><td>Recurse into subdirectories.</td></tr></tbody></table></div>
+<p>Returns a <a href="#files-fsdir">FilesystemDirectory</a> for the downloads root.</p>
+
+<h3 id="files-downloads-subdir">List downloads subdirectory</h3>
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/files/downloads/directories/{base64SubdirectoryName}</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p><code>{base64SubdirectoryName}</code>: Base64 of the path relative to the downloads root. Same <code>recursive</code> query param. <span class="type">403</span> if access is denied (outside the root); <span class="type">404</span> if the directory does not exist.</p>
+
+<h3 id="files-downloads-deldir">Delete downloads subdirectory</h3>
+<div class="endpoint"><span class="badge delete">DELETE</span><span class="path">/api/v0/files/downloads/directories/{base64SubdirectoryName}</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Requires <code>remoteFileManagement</code>. Returns <span class="type">204</span>; <span class="type">403</span> if disabled or access denied; <span class="type">404</span> if absent.</p>
+
+<h3 id="files-downloads-delfile">Delete downloads file</h3>
+<div class="endpoint"><span class="badge delete">DELETE</span><span class="path">/api/v0/files/downloads/files/{base64FileName}</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p><code>{base64FileName}</code>: Base64 of the file path relative to the downloads root. Requires <code>remoteFileManagement</code>. Returns <span class="type">204</span>; <span class="type">403</span>/<span class="type">404</span> as above.</p>
+
+<h3 id="files-incomplete-list">List incomplete root</h3>
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/files/incomplete/directories</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>As the downloads-root listing, but rooted at the incomplete directory. Accepts <code>recursive</code>.</p>
+
+<h3 id="files-incomplete-subdir">List incomplete subdirectory</h3>
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/files/incomplete/directories/{base64SubdirectoryName}</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>As the downloads subdirectory listing, rooted at the incomplete directory.</p>
+
+<h3 id="files-incomplete-deldir">Delete incomplete subdirectory</h3>
+<div class="endpoint"><span class="badge delete">DELETE</span><span class="path">/api/v0/files/incomplete/directories/{base64SubdirectoryName}</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Requires <code>remoteFileManagement</code>. Returns <span class="type">204</span>; <span class="type">403</span>/<span class="type">404</span> as above.</p>
+
+<h3 id="files-incomplete-delfile">Delete incomplete file</h3>
+<div class="endpoint"><span class="badge delete">DELETE</span><span class="path">/api/v0/files/incomplete/files/{base64FileName}</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Requires <code>remoteFileManagement</code>. Returns <span class="type">204</span>; <span class="type">403</span>/<span class="type">404</span> as above.</p>
+<p class="src-ref">Source: src/slskd/Files/API/FilesController.cs, Files/Types/FilesystemDirectory.cs, FilesystemFile.cs</p>
+
+<!-- ============================================================ EVENTS -->
+<h2 id="events">Events — <code>/events</code></h2>
+<p>The persisted event log and a test harness for raising synthetic events. Live event delivery is over SignalR — see <a href="realtime-api.html">Real-Time API &amp; Events</a> for the event model and types.</p>
+
+<h3 id="events-list">List events (paginated)</h3>
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/events</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<div class="table-wrap"><table><thead><tr><th>Query</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>offset</code></td><td><span class="type">int32</span></td><td><code>0</code></td><td>Record offset (≥0).</td></tr>
+<tr><td><code>limit</code></td><td><span class="type">int32</span></td><td><code>100</code></td><td>Page size (&gt;0).</td></tr>
+</tbody></table></div>
+<p>Returns <code>EventRecord[]</code> and sets the <code>X-Total-Count</code> response header to the total number of records. <span class="type">400</span> if <code>offset &lt; 0</code> or <code>limit &le; 0</code>.</p>
+
+<h3 id="events-raise">Raise a sample event</h3>
+<div class="endpoint"><span class="badge post">POST</span><span class="path">/api/v0/events/{type}</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p><code>{type}</code> is an <code>EventType</code> name (case-insensitive), one of <code>DownloadFileComplete</code>, <code>DownloadDirectoryComplete</code>, <code>UploadFileComplete</code>, <code>PrivateMessageReceived</code>, <code>RoomMessageReceived</code>, <code>Noop</code>. Body: an optional <code>disambiguator</code> string used to vary the generated sample. Raises a randomly-populated event of that type onto the event bus and returns <span class="type">201</span> with the generated <code>Event</code>. The sentinel types <code>None</code> and <code>Any</code> cannot be raised → <span class="type">400</span>; an unknown type → <span class="type">400</span> with the list of valid names.</p>
+<div class="note callout"><span class="label">Note</span><p>The "loopback" diagnostic endpoint lives on the Application controller — <span class="badge post">POST</span> <code>/api/v0/application/loopback</code> — not on Events.</p></div>
+<p class="src-ref">Source: src/slskd/Events/API/EventsController.cs</p>
+
+<!-- ============================================================ RELAY -->
+<h2 id="relay">Relay — <code>/relay</code></h2>
+<p>HTTP surface of the relay subsystem (<code>RelayController</code>). Protocol semantics, the agent/controller roles, and credential computation are in <a href="relay.html">Relay Protocol</a>. These endpoints are gated by the relay <code>mode</code> and <code>enabled</code> flag and return <span class="type">403</span> when not applicable.</p>
+<div class="note callout"><span class="label">Note</span><p>Agent <strong>registration</strong> is not a REST call: an agent registers with the controller over the SignalR <em>relay hub</em> (<code>RelayHub</code>), not via <code>/relay</code>. The <code>controller/*</code> endpoints below are the data-plane that an agent calls back into. See <a href="relay.html">Relay Protocol</a>.</p></div>
+
+<h3 id="relay-agent-connect">Agent: connect to controller</h3>
+<div class="endpoint"><span class="badge put">PUT</span><span class="path">/api/v0/relay/agent</span><span class="auth"><span class="badge role admin">Administrator</span></span></div>
+<p><strong>Policy <code>JwtOnly</code></strong> + Administrator. Starts the agent's relay client (connecting to the configured controller). Allowed only when relay is enabled and the mode is <code>Agent</code> or <code>Debug</code>; otherwise <span class="type">403</span>. Returns <span class="type">200</span>.</p>
+
+<h3 id="relay-agent-disconnect">Agent: disconnect from controller</h3>
+<div class="endpoint"><span class="badge delete">DELETE</span><span class="path">/api/v0/relay/agent</span><span class="auth"><span class="badge role admin">Administrator</span></span></div>
+<p><strong>Policy <code>JwtOnly</code></strong> + Administrator. Stops the agent's relay client. Same mode gate as above. Returns <span class="type">204</span>.</p>
+
+<h3 id="relay-download">Controller: serve a file to the agent</h3>
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/relay/controller/downloads/{token}</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p><strong>Policy <code>ApiKeyOnly</code></strong>. Called by an agent to download a completed file from the controller. <code>{token}</code> is the request GUID. Required headers: <code>X-Relay-Agent</code> (agent name), <code>X-Relay-Credential</code> (encrypted credential), <code>X-Relay-Filename-Base64</code> (Base64 of the requested filename). The controller validates the credential and streams the file as <code>application/octet-stream</code>. Invalid token format → <span class="type">400</span>; unknown agent / missing credential / failed validation → <span class="type">401</span>; missing or path-traversing filename → <span class="type">400</span>. The token remains valid after use to support retries.</p>
+
+<h3 id="relay-files">Controller: receive a file from the agent</h3>
+<div class="endpoint"><span class="badge post">POST</span><span class="path">/api/v0/relay/controller/files/{token}</span><span class="auth"><span class="badge role readwrite">ReadWrite</span></span></div>
+<p><strong>Policy <code>ApiKeyOnly</code></strong> + ReadWrite/Administrator. Multipart form upload of a single file stream from the agent, used to feed an outgoing upload in flight (request size limit 10&nbsp;TiB). Requires <code>X-Relay-Agent</code> and <code>X-Relay-Credential</code> headers; the filename is taken from the multipart content-disposition. Non-multipart → <code>415</code>; unknown agent / failed credential validation → <span class="type">401</span>; bad/missing/path-traversing filename → <span class="type">400</span>. Returns <span class="type">200</span> when the forwarded upload completes.</p>
+
+<h3 id="relay-shares">Controller: receive shares from the agent</h3>
+<div class="endpoint"><span class="badge post">POST</span><span class="path">/api/v0/relay/controller/shares/{token}</span><span class="auth"><span class="badge role readwrite">ReadWrite</span></span></div>
+<p><strong>Policy <code>ApiKeyOnly</code></strong> + ReadWrite/Administrator. Multipart form upload of the agent's share catalogue: a <code>shares</code> form field (JSON array of <a href="data-model.html#share">Share</a>) plus the share database file (request size limit 1&nbsp;TiB). Requires <code>X-Relay-Agent</code> and <code>X-Relay-Credential</code> headers. Non-multipart → <code>415</code>; unknown agent / failed validation → <span class="type">401</span>; malformed form or share-validation failure → <span class="type">400</span>. Returns <span class="type">200</span> on success.</p>
+<p class="src-ref">Source: src/slskd/Relay/API/Controllers/RelayController.cs, Relay/API/Hubs/RelayHub.cs</p>
+
+<!-- ============================================================ METRICS -->
+<h2 id="telemetry-metrics">Telemetry: Metrics — <code>/telemetry/metrics</code></h2>
+<p>Application and system metrics (<code>MetricsController</code>, route <code>telemetry/metrics</code>).</p>
+
+<h3 id="metrics-get">Get metrics</h3>
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/telemetry/metrics</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Content negotiated by the <code>Accept</code> header. With <code>Accept: application/json</code>, returns a dictionary keyed by metric name of <code>PrometheusMetric</code> objects. Otherwise (e.g. <code>text/plain</code>) returns the raw Prometheus exposition text. <span class="type">500</span> on error.</p>
+
+<h3 id="metrics-kpis">Get KPIs</h3>
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/telemetry/metrics/kpis</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p>Returns a curated subset of metrics (matching the KPI regex filters: <code>slskd_*</code>, <code>node_*</code> except cpu, <code>process_*</code>, managed-memory, runtime, sockets, Kestrel connections) as a dictionary keyed by metric name of <code>PrometheusMetric</code>. <span class="type">500</span> on error.</p>
+<p class="src-ref">Source: src/slskd/Telemetry/API/MetricsController.cs</p>
+
+<!-- ============================================================ REPORTS -->
+<h2 id="telemetry-reports">Telemetry: Reports — <code>/telemetry/reports</code></h2>
+<p>Aggregated transfer-activity reporting over the local transfer history (<code>ReportsController</code>, route <code>telemetry/reports</code>). All <code>start</code>/<code>end</code> values are ISO-8601 <span class="type">DateTime</span> (UTC). The <code>direction</code> filter is <code>Upload</code> or <code>Download</code> (case-insensitive). <code>sortOrder</code> is <code>ASC</code> or <code>DESC</code> (default <code>DESC</code>). All endpoints validate that <code>start &lt; end</code> (else <span class="type">400</span>) and, where present, that <code>limit &gt; 0</code> and <code>offset &ge; 0</code>.</p>
+
+<h3 id="reports-summary">Transfer summary</h3>
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/telemetry/reports/transfers/summary</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<div class="table-wrap"><table><thead><tr><th>Query</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>start</code></td><td><span class="type">datetime?</span></td><td>now − 7d</td><td>Window start.</td></tr>
+<tr><td><code>end</code></td><td><span class="type">datetime?</span></td><td>now</td><td>Window end.</td></tr>
+<tr><td><code>direction</code></td><td><span class="type">string?</span></td><td>—</td><td>Filter to Upload/Download.</td></tr>
+<tr><td><code>username</code></td><td><span class="type">string?</span></td><td>—</td><td>Filter to a user.</td></tr>
+</tbody></table></div>
+<p>Returns a nested dictionary <code>{ direction: { state: TransferSummary } }</code> (counts, total bytes, average speed per final <a href="data-model.html#transferstates">TransferStates</a>). Invalid <code>direction</code> → <span class="type">400</span>.</p>
+
+<h3 id="reports-histogram">Transfer histogram</h3>
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/telemetry/reports/transfers/histogram</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<div class="table-wrap"><table><thead><tr><th>Query</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>start</code></td><td><span class="type">datetime?</span></td><td>now − 7d</td><td>Window start (clamped to the app genesis date).</td></tr>
+<tr><td><code>end</code></td><td><span class="type">datetime?</span></td><td>now</td><td>Window end.</td></tr>
+<tr><td><code>interval</code></td><td><span class="type">int32</span></td><td><code>60</code></td><td>Bucket size in minutes (minimum 5).</td></tr>
+<tr><td><code>direction</code></td><td><span class="type">string?</span></td><td>—</td><td>Filter to Upload/Download.</td></tr>
+<tr><td><code>username</code></td><td><span class="type">string?</span></td><td>—</td><td>Filter to a user.</td></tr>
+</tbody></table></div>
+<p>Returns <code>{ bucketTime: { direction: { state: TransferSummary } } }</code>. <code>interval &lt; 5</code> or invalid <code>direction</code> → <span class="type">400</span>.</p>
+
+<h3 id="reports-leaderboard">Transfer leaderboard</h3>
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/telemetry/reports/transfers/leaderboard</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<div class="table-wrap"><table><thead><tr><th>Query</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>direction</code></td><td><span class="type">string</span></td><td>required</td><td>Upload or Download.</td></tr>
+<tr><td><code>start</code></td><td><span class="type">datetime?</span></td><td>genesis</td><td>Window start.</td></tr>
+<tr><td><code>end</code></td><td><span class="type">datetime?</span></td><td>now</td><td>Window end.</td></tr>
+<tr><td><code>sortBy</code></td><td><span class="type">string</span></td><td><code>Count</code></td><td>One of <code>Count</code>, <code>TotalBytes</code>, <code>AverageSpeed</code>.</td></tr>
+<tr><td><code>sortOrder</code></td><td><span class="type">string</span></td><td><code>DESC</code></td><td><code>ASC</code> or <code>DESC</code>.</td></tr>
+<tr><td><code>limit</code></td><td><span class="type">int32</span></td><td><code>25</code></td><td>Page size (&gt;0).</td></tr>
+<tr><td><code>offset</code></td><td><span class="type">int32</span></td><td><code>0</code></td><td>Record offset (≥0).</td></tr>
+</tbody></table></div>
+<p>Returns <code>TransferSummary[]</code> (top users by the chosen metric). Missing/invalid <code>direction</code>, <code>sortBy</code>, or <code>sortOrder</code> → <span class="type">400</span>.</p>
+
+<h3 id="reports-user">User transfer detail</h3>
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/telemetry/reports/transfers/users/{username}</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<p><code>{username}</code> is URL-encoded. Optional <code>start</code> (default genesis) / <code>end</code> (default now). Returns a dictionary keyed by direction (<code>Upload</code>, <code>Download</code>) of <code>UserDirectionTransferSummary</code> — each with a per-state <code>summary</code>, computed <code>statistics</code> (<code>total</code>, <code>successful</code>, <code>errored</code>, <code>cancelled</code>), and the user's top transfer <code>exceptions</code>.</p>
+
+<h3 id="reports-exceptions">Transfer exceptions</h3>
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/telemetry/reports/transfers/exceptions</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<div class="table-wrap"><table><thead><tr><th>Query</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>direction</code></td><td><span class="type">string</span></td><td>required</td><td>Upload or Download.</td></tr>
+<tr><td><code>start</code></td><td><span class="type">datetime?</span></td><td>min</td><td>Window start.</td></tr>
+<tr><td><code>end</code></td><td><span class="type">datetime?</span></td><td>max</td><td>Window end.</td></tr>
+<tr><td><code>username</code></td><td><span class="type">string?</span></td><td>—</td><td>Filter to a user.</td></tr>
+<tr><td><code>sortOrder</code></td><td><span class="type">string</span></td><td><code>DESC</code></td><td><code>ASC</code> or <code>DESC</code>.</td></tr>
+<tr><td><code>limit</code></td><td><span class="type">int32</span></td><td><code>25</code></td><td>Page size (&gt;0).</td></tr>
+<tr><td><code>offset</code></td><td><span class="type">int32</span></td><td><code>0</code></td><td>Record offset (≥0).</td></tr>
+</tbody></table></div>
+<p>Returns <code>TransferExceptionDetail[]</code>. Missing/invalid <code>direction</code> or <code>sortOrder</code> → <span class="type">400</span>.</p>
+
+<h3 id="reports-exceptions-pareto">Transfer exceptions (Pareto)</h3>
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/telemetry/reports/transfers/exceptions/pareto</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<div class="table-wrap"><table><thead><tr><th>Query</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>direction</code></td><td><span class="type">string</span></td><td>required</td><td>Upload or Download.</td></tr>
+<tr><td><code>start</code></td><td><span class="type">datetime?</span></td><td>min</td><td>Window start.</td></tr>
+<tr><td><code>end</code></td><td><span class="type">datetime?</span></td><td>max</td><td>Window end.</td></tr>
+<tr><td><code>username</code></td><td><span class="type">string?</span></td><td>—</td><td>Filter to a user.</td></tr>
+<tr><td><code>limit</code></td><td><span class="type">int32</span></td><td><code>25</code></td><td>Page size (&gt;0).</td></tr>
+<tr><td><code>offset</code></td><td><span class="type">int32</span></td><td><code>0</code></td><td>Record offset (≥0).</td></tr>
+</tbody></table></div>
+<p>Returns the top-N exceptions by total count as <code>TransferExceptionSummary[]</code>. Missing/invalid <code>direction</code> → <span class="type">400</span>.</p>
+
+<h3 id="reports-directories">Transfer directory frequency</h3>
+<div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/telemetry/reports/transfers/directories</span><span class="auth"><span class="badge role any">Any</span></span></div>
+<div class="table-wrap"><table><thead><tr><th>Query</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>start</code></td><td><span class="type">datetime?</span></td><td>genesis</td><td>Window start.</td></tr>
+<tr><td><code>end</code></td><td><span class="type">datetime?</span></td><td>max</td><td>Window end.</td></tr>
+<tr><td><code>username</code></td><td><span class="type">string?</span></td><td>—</td><td>Filter to a user.</td></tr>
+<tr><td><code>limit</code></td><td><span class="type">int32</span></td><td><code>25</code></td><td>Page size (&gt;0).</td></tr>
+<tr><td><code>offset</code></td><td><span class="type">int32</span></td><td><code>0</code></td><td>Record offset (≥0).</td></tr>
+</tbody></table></div>
+<p>Returns the most frequently downloaded directories (by count and distinct users) as <code>TransferDirectorySummary[]</code>.</p>
+<p class="src-ref">Source: src/slskd/Telemetry/API/ReportsController.cs, Telemetry/Types/LeaderboardSorting.cs, SortOrder.cs</p>
+
+    <div class="page-nav-links">
+      <a class="prev" href="authentication.html"><span class="dir">&larr; Previous</span><br><span class="ttl">Authentication &amp; Security</span></a>
+      <a class="next" href="realtime-api.html"><span class="dir">Next &rarr;</span><br><span class="ttl">Real-Time API &amp; Events</span></a>
+    </div>
+    <footer class="page-footer">
+      <span>slskd / Soulseek Protocol &amp; Model Specification &middot; derived from source (slskd, Soulseek.NET 10.0.1) &middot; AGPL-3.0</span>
+      <span>Not an official Soulseek document.</span>
+    </footer>
+  </main>
+</div>
+</div>
+<script src="script.js"></script>
+</body>
+</html>

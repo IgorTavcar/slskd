@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Soulseek Wire Protocol · slskd Protocol &amp; Model Specification</title>
+<meta name="description" content="slskd / Soulseek network, protocol and data-model specification — Soulseek Wire Protocol. A language-agnostic reference for building clients, apps and services that interoperate with the Soulseek platform.">
+<link rel="stylesheet" href="style.css">
+<script>(function(){try{var t=localStorage.getItem('slskd-spec-theme');if(t){document.documentElement.setAttribute('data-theme',t);}else if(window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches){document.documentElement.setAttribute('data-theme','dark');}}catch(e){}})();</script>
+</head>
+<body>
+<div class="scrim"></div>
+<div class="layout">
+<aside class="sidebar">
+  <div class="brand">
+    <div class="logo">sd</div>
+    <div class="brand-text">
+      <span class="brand-title">slskd Spec</span>
+      <span class="brand-sub">Soulseek protocol &amp; model</span>
+    </div>
+  </div>
+  <div class="nav-filter-wrap"><input class="nav-filter" type="text" placeholder="Filter pages…" aria-label="Filter pages"></div>
+  <nav>
+  <div class="nav-group-label">Introduction</div>
+  <ul>
+    <li><a href="index.html"><span class="nav-num">1</span><span>Overview</span></a></li>
+    <li><a href="architecture.html"><span class="nav-num">2</span><span>Architecture &amp; Concepts</span></a></li>
+  </ul>
+  <div class="nav-group-label">The Soulseek Network</div>
+  <ul>
+    <li class="active"><a href="soulseek-protocol.html" aria-current="page"><span class="nav-num">3</span><span>Soulseek Wire Protocol</span></a></li>
+    <li><a href="data-model.html"><span class="nav-num">4</span><span>Data Model &amp; Types</span></a></li>
+  </ul>
+  <div class="nav-group-label">Domains</div>
+  <ul>
+    <li><a href="search.html"><span class="nav-num">5</span><span>Search</span></a></li>
+    <li><a href="transfers.html"><span class="nav-num">6</span><span>Transfers &amp; Queueing</span></a></li>
+    <li><a href="users-rooms.html"><span class="nav-num">7</span><span>Users, Rooms &amp; Chat</span></a></li>
+    <li><a href="shares.html"><span class="nav-num">8</span><span>Shares &amp; Browsing</span></a></li>
+  </ul>
+  <div class="nav-group-label">Integration</div>
+  <ul>
+    <li><a href="authentication.html"><span class="nav-num">9</span><span>Authentication &amp; Security</span></a></li>
+    <li><a href="rest-api.html"><span class="nav-num">10</span><span>REST API Reference</span></a></li>
+    <li><a href="realtime-api.html"><span class="nav-num">11</span><span>Real-Time API &amp; Events</span></a></li>
+    <li><a href="relay.html"><span class="nav-num">12</span><span>Relay Protocol</span></a></li>
+  </ul>
+</nav>
+</aside>
+<div class="main-col">
+  <header class="topbar">
+    <button class="menu-btn" aria-label="Toggle navigation">&#9776;</button>
+    <span class="crumb">The Soulseek Network / <b>Soulseek Wire Protocol</b></span>
+    <span class="spacer"></span>
+    <a class="tb-link" href="index.html#sitemap">Contents</a>
+    <a class="tb-link" href="https://github.com/slskd/slskd" target="_blank" rel="noopener">GitHub</a>
+    <button class="theme-toggle" aria-label="Toggle dark mode" title="Toggle theme">◐</button>
+  </header>
+  <main class="content">
+
+<h1>Soulseek Wire Protocol</h1>
+<p class="page-lede">The native Soulseek protocol is a binary, little-endian, length-prefixed message protocol spoken over plain TCP. It spans three logical domains — a central <strong>server</strong>, direct <strong>peer</strong> connections, and a <strong>distributed</strong> search tree — plus a small connection-initialization handshake. slskd does not implement these bytes itself: it delegates the entire wire protocol to the <a href="https://github.com/jpdillingham/Soulseek.NET" target="_blank" rel="noopener">Soulseek.NET</a> library (v10.0.1). This page documents the on-the-wire format so that an engineer can implement a native client in any language, or understand exactly what slskd exchanges with the network underneath its REST/SignalR surface.</p>
+
+<div class="note callout"><span class="label">Provenance &amp; accuracy</span><p>The Soulseek protocol is <strong>proprietary and undocumented by its authors</strong>. Every code and structure here is community reverse-engineered. The catalogs below are cross-checked against two authoritative sources: the <a href="https://nicotine-plus.org/doc/SLSKPROTOCOL.html" target="_blank" rel="noopener">Nicotine+ protocol documentation</a> (the de-facto reference) and the <code>MessageCode.cs</code> enum of <a href="https://github.com/jpdillingham/Soulseek.NET/blob/master/src/Messaging/MessageCode.cs" target="_blank" rel="noopener">Soulseek.NET</a> — the exact library slskd uses, so its naming is what slskd "knows". Where the two disagree on a name, both are shown. Codes marked <em>obsolete</em>/<em>deprecated</em> are documented for completeness but are not exercised by current clients. The protocol drifts as the official client evolves; treat any single code as verifiable-but-not-guaranteed.</p></div>
+
+<nav class="toc"><div class="toc-title">On this page</div><ul>
+  <li><a href="#framing">Message framing</a></li>
+  <li><a href="#primitives">Primitive types &amp; encoding</a></li>
+  <li><a href="#obfuscation">Message obfuscation</a></li>
+  <li><a href="#worked-example">Worked byte-layout example</a></li>
+  <li><a href="#domains">The four message domains</a></li>
+  <li><a href="#server-messages">Server messages</a></li>
+  <li><a href="#init-messages">Peer-init (connection) messages</a></li>
+  <li><a href="#peer-messages">Peer messages</a></li>
+  <li><a href="#distributed-messages">Distributed messages</a></li>
+  <li><a href="#connection-establishment">Connection establishment</a></li>
+  <li><a href="#file-transfer">File transfer over 'F'</a></li>
+  <li><a href="#search-delivery">Search delivery end-to-end</a></li>
+  <li><a href="#slskd-mapping">How slskd maps onto the protocol</a></li>
+</ul></nav>
+
+<h2 id="framing">Message framing</h2>
+<p>Every message — on every connection type — is a length-prefixed frame. The 4-byte length prefix counts the bytes that <em>follow</em> it (i.e. it excludes itself), and always includes the code field.</p>
+
+<pre><code>+----------------+----------------+--------------------------+
+| length: uint32 | code           | payload (length - sizeof(code) bytes) |
++----------------+----------------+--------------------------+
+       4 bytes     1 or 4 bytes              variable
+</code></pre>
+
+<p>The width of the <strong>code</strong> field depends on the domain:</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Domain</th><th>Connection</th><th>Code width</th><th>Frame</th></tr></thead>
+<tbody>
+<tr><td>Server</td><td>single long-lived TCP to the central server</td><td><span class="type">uint32</span></td><td><code>&lt;uint32 length&gt;&lt;uint32 code&gt;&lt;payload&gt;</code></td></tr>
+<tr><td>Peer</td><td>'P' connection, peer-to-peer</td><td><span class="type">uint32</span></td><td><code>&lt;uint32 length&gt;&lt;uint32 code&gt;&lt;payload&gt;</code></td></tr>
+<tr><td>Peer-init</td><td>first message on any new peer connection</td><td><span class="type">uint8</span></td><td><code>&lt;uint32 length&gt;&lt;uint8 code&gt;&lt;payload&gt;</code></td></tr>
+<tr><td>Distributed</td><td>'D' connection, search tree</td><td><span class="type">uint8</span></td><td><code>&lt;uint32 length&gt;&lt;uint8 code&gt;&lt;payload&gt;</code></td></tr>
+<tr><td>File</td><td>'F' connection</td><td>— (none)</td><td>no message framing after init; raw byte stream</td></tr>
+</tbody>
+</table></div>
+
+<div class="note callout warn"><span class="label">Length includes the code</span><p>Because <code>length</code> counts the code field, a server/peer message with an empty payload has <code>length = 4</code>; a distributed/peer-init message with an empty payload has <code>length = 1</code>. A reader frames by: read 4 bytes (length, LE) → read exactly that many more bytes → the first 1 or 4 of those are the code.</p></div>
+
+<h2 id="primitives">Primitive types &amp; encoding</h2>
+<p><strong>All integers are little-endian.</strong> There is no alignment or padding; fields are packed back-to-back. The protocol uses a small set of primitives:</p>
+
+<div class="table-wrap"><table>
+<thead><tr><th>Type</th><th>Width</th><th>Encoding</th></tr></thead>
+<tbody>
+<tr><td><span class="type">uint8</span> / <span class="type">bool</span></td><td>1 byte</td><td>Unsigned byte. As a bool, <code>0x00</code> = false, <code>0x01</code> = true (any non-zero is true on read).</td></tr>
+<tr><td><span class="type">uint32</span></td><td>4 bytes</td><td>Little-endian unsigned 32-bit. Used for lengths, codes, tokens, ports, counts, IPv4 addresses, speeds.</td></tr>
+<tr><td><span class="type">uint64</span></td><td>8 bytes</td><td>Little-endian unsigned 64-bit. Used for file sizes and the file-transfer offset.</td></tr>
+<tr><td><span class="type">string</span></td><td>4 + N bytes</td><td><code>&lt;uint32 length N&gt;&lt;N bytes&gt;</code>. Bytes are <strong>UTF-8</strong> in modern clients. (Historically Latin-1 / CP-1252; readers should be lenient.) Not NUL-terminated.</td></tr>
+<tr><td><span class="type">bytes</span></td><td>4 + N bytes</td><td>Same framing as string but raw/opaque payload (e.g. compressed blobs, user-info pictures).</td></tr>
+</tbody>
+</table></div>
+
+<p>Higher-level structures are built by concatenation. Two conventions appear constantly:</p>
+<ul>
+<li><strong>Lists</strong> — a <span class="type">uint32</span> count followed by that many repetitions of an element layout. (For example, a search result's file list, or a room list.)</li>
+<li><strong>IPv4 address</strong> — sent as a single <span class="type">uint32</span>. Note the byte order: in <code>GetPeerAddress</code> / <code>ConnectToPeer</code> the address is read so that octet order is effectively reversed relative to the LE integer; implementers should validate against the reference rather than assume.</li>
+</ul>
+
+<h3 id="file-attributes">File entries &amp; attributes</h3>
+<p>A shared/result file entry is itself a structured sub-record, used in <code>SearchResponse</code>, <code>BrowseResponse</code> and <code>FolderContentsResponse</code>:</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Field</th><th>Type</th><th>Notes</th></tr></thead>
+<tbody>
+<tr><td>code</td><td><span class="type">uint8</span></td><td>Legacy file-code byte (commonly 1); ignored by most readers.</td></tr>
+<tr><td>filename</td><td><span class="type">string</span></td><td>Full path using backslash <code>\</code> separators (Windows convention), UTF-8.</td></tr>
+<tr><td>size</td><td><span class="type">uint64</span></td><td>File size in bytes.</td></tr>
+<tr><td>extension</td><td><span class="type">string</span></td><td>Extension without the dot (may be empty).</td></tr>
+<tr><td>attributeCount</td><td><span class="type">uint32</span></td><td>Number of attribute pairs that follow.</td></tr>
+<tr><td>attributes[]</td><td><span class="type">uint32</span> key, <span class="type">uint32</span> value</td><td>Keyed audio metadata. Common keys: <code>0</code>=bitrate (kbps), <code>1</code>=duration (seconds), <code>2</code>=VBR flag, <code>4</code>=sample rate (Hz), <code>5</code>=bit depth.</td></tr>
+</tbody>
+</table></div>
+<div class="note callout"><span class="label">Note</span><p>The attribute-key set is conventional, not enforced; see <a href="data-model.html#file">Data Model &rarr; File</a> for how slskd surfaces these as the <code>length</code>, <code>bitRate</code>, <code>sampleRate</code>, <code>bitDepth</code> and <code>isVariableBitRate</code> properties on its <code>File</code> DTO.</p></div>
+
+<h2 id="obfuscation">Message obfuscation</h2>
+<p>The base protocol is plaintext over TCP — there is no transport encryption. The official client and Nicotine+ support an optional <strong>message obfuscation</strong> scheme on peer/distributed connections, negotiated per-connection (obfuscation type: <code>0</code> = none, <code>1</code> = rotated). It is a lightweight rotating-XOR scheme intended only to evade naive ISP/DPI matching — <em>not</em> a security feature. It provides no confidentiality or integrity.</p>
+<div class="warn callout"><span class="label">slskd / Soulseek.NET</span><p>Soulseek.NET (and therefore slskd) speaks the <strong>unobfuscated</strong> protocol. Interoperability does not require implementing obfuscation; peers fall back to plaintext. There is no transport-layer authentication or encryption on the Soulseek network — credentials are sent to the central server in the <code>Login</code> message (with a password hash; see <a href="#worked-example">below</a>), but peer traffic is fully in the clear.</p></div>
+
+<h2 id="worked-example">Worked byte-layout example</h2>
+<p>Two concrete frames. Byte values are shown in hex; <code>·</code> groups fields only for readability.</p>
+
+<h3 id="example-login">Server &mdash; Login (code 1)</h3>
+<p>The first message a client sends after the server TCP connection opens. Payload layout (per Nicotine+):</p>
+<div class="table-wrap"><table>
+<thead><tr><th>#</th><th>Field</th><th>Type</th><th>Value (example)</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>username</td><td><span class="type">string</span></td><td>"alice"</td></tr>
+<tr><td>2</td><td>password</td><td><span class="type">string</span></td><td>"secret"</td></tr>
+<tr><td>3</td><td>version (major)</td><td><span class="type">uint32</span></td><td>160 (client major; Soulseek.NET sends 157)</td></tr>
+<tr><td>4</td><td>hash</td><td><span class="type">string</span></td><td>MD5(username + password), lowercase hex</td></tr>
+<tr><td>5</td><td>minor version</td><td><span class="type">uint32</span></td><td>e.g. 760 (slskd's <code>NetworkMinorVersion</code>)</td></tr>
+</tbody>
+</table></div>
+<pre><code>Frame for Login("alice","secret", ...):
+
+41 00 00 00            length  = 0x41 = 65 bytes follow
+01 00 00 00            code    = 1  (Login)
+05 00 00 00 61 6C 69 63 65          string "alice"   (len 5 + bytes)
+06 00 00 00 73 65 63 72 65 74       string "secret"  (len 6 + bytes)
+9D 00 00 00            version = 157
+20 00 00 00 ....(32 hex chars)....  string  MD5(username+password) hash
+F8 02 00 00            minor   = 760
+</code></pre>
+<p class="src-ref">Source: slskd uses major version 157 (Soulseek.NET default) and minor <code>NetworkMinorVersion = 760</code> — src/slskd/Program.cs:181, passed at src/slskd/Program.cs:708.</p>
+
+<h3 id="example-filesearch">Server &mdash; FileSearch (code 26)</h3>
+<p>A global search. The token is the client's correlation id; results arrive later, asynchronously, over inbound peer connections (see <a href="#search-delivery">Search delivery</a>).</p>
+<pre><code>Payload = &lt;uint32 token&gt;&lt;string query&gt;
+
+Frame for FileSearch(token=0x2A, query="aphex twin"):
+
+16 00 00 00            length  = 0x16 = 22 bytes follow
+1A 00 00 00            code    = 26 (FileSearch)
+2A 00 00 00            token   = 42
+0A 00 00 00 61 70 68 65 78 20 74 77 69 6E   string "aphex twin" (len 10 + bytes)
+</code></pre>
+
+<h2 id="domains">The four message domains</h2>
+<p>The protocol is partitioned by which connection a message travels over. Direction notation used below: <strong>C&rarr;S</strong> client to server, <strong>S&rarr;C</strong> server to client, <strong>peer</strong> peer-to-peer (either direction), <strong>distributed</strong> over the search tree.</p>
+<div class="card-grid">
+  <a class="card" href="#server-messages"><span class="kicker">uint32 code</span><h3>Server</h3><p>Login, status, rooms, private chat, search injection, the distributed-tree control plane.</p></a>
+  <a class="card" href="#init-messages"><span class="kicker">uint8 code</span><h3>Peer-init</h3><p>PeerInit &amp; PierceFirewall — the two messages that bootstrap any peer/file/distributed connection.</p></a>
+  <a class="card" href="#peer-messages"><span class="kicker">uint32 code</span><h3>Peer</h3><p>Browse, user info, folder contents, search results, transfer negotiation, queueing.</p></a>
+  <a class="card" href="#distributed-messages"><span class="kicker">uint8 code</span><h3>Distributed</h3><p>The broadcast tree that fans search requests out to every online peer.</p></a>
+</div>
+
+<h2 id="server-messages">Server messages</h2>
+<p>Sent over the single persistent TCP connection to the central server (slskd default <code>vps.slsknet.org:2271</code>). Codes and names below are the Soulseek.NET <code>MessageCode.Server</code> enum, with the Nicotine+ name noted where it differs.</p>
+
+<div class="table-wrap"><table>
+<thead><tr><th>Code</th><th>Name (Soulseek.NET)</th><th>Dir</th><th>Purpose</th><th>Key fields</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>Login</td><td>C&rarr;S, S&rarr;C</td><td>Authenticate; reply carries success flag, greeting/message, your external IP, hash check.</td><td>username, password, version, MD5 hash, minor</td></tr>
+<tr><td>2</td><td>SetListenPort <span class="type">(SetWaitPort)</span></td><td>C&rarr;S</td><td>Declare the TCP port you listen on for inbound peer connections.</td><td>port; (optional obfuscated port)</td></tr>
+<tr><td>3</td><td>GetPeerAddress</td><td>C&rarr;S, S&rarr;C</td><td>Resolve a username to its IP + listen port.</td><td>username &rarr; ip, port</td></tr>
+<tr><td>5</td><td>WatchUser <span class="type">(AddUser)</span></td><td>C&rarr;S, S&rarr;C</td><td>Subscribe to a user's status/stats; reply has exists flag, status, speed, file/folder counts.</td><td>username</td></tr>
+<tr><td>6</td><td>UnwatchUser <span class="type">(RemoveUser)</span></td><td>C&rarr;S</td><td>Stop watching a user.</td><td>username</td></tr>
+<tr><td>7</td><td>GetStatus <span class="type">(GetUserStatus)</span></td><td>C&rarr;S, S&rarr;C</td><td>Query/receive a user's online status and privileged flag.</td><td>username &rarr; status, privileged</td></tr>
+<tr><td>13</td><td>SayInChatRoom <span class="type">(SayChatroom)</span></td><td>both</td><td>Post a message to a room / receive one.</td><td>room, username, message</td></tr>
+<tr><td>14</td><td>JoinRoom</td><td>C&rarr;S, S&rarr;C</td><td>Join (or create) a room; reply lists members and their stats.</td><td>room &rarr; users[], stats[]</td></tr>
+<tr><td>15</td><td>LeaveRoom</td><td>C&rarr;S, S&rarr;C</td><td>Leave a room.</td><td>room</td></tr>
+<tr><td>16</td><td>UserJoinedRoom</td><td>S&rarr;C</td><td>A user joined a room you're in.</td><td>room, username, status, stats</td></tr>
+<tr><td>17</td><td>UserLeftRoom</td><td>S&rarr;C</td><td>A user left a room you're in.</td><td>room, username</td></tr>
+<tr><td>18</td><td>ConnectToPeer</td><td>both</td><td>Request/relay an indirect connection (firewall traversal). See <a href="#connection-establishment">Connection establishment</a>.</td><td>token, username, type, ip, port</td></tr>
+<tr><td>22</td><td>PrivateMessage <span class="type">(MessageUser)</span></td><td>both</td><td>Send/receive a private message.</td><td>id, timestamp, username, message</td></tr>
+<tr><td>23</td><td>AcknowledgePrivateMessage <span class="type">(MessageAcked)</span></td><td>C&rarr;S</td><td>Acknowledge a received PM so the server stops re-delivering it.</td><td>id</td></tr>
+<tr><td>26</td><td>FileSearch</td><td>C&rarr;S</td><td>Submit a global search; server injects it into the distributed tree.</td><td>token, query</td></tr>
+<tr><td>28</td><td>SetOnlineStatus <span class="type">(SetStatus)</span></td><td>C&rarr;S</td><td>Set your status (0 offline / 1 away / 2 online).</td><td>status</td></tr>
+<tr><td>32</td><td>Ping <span class="type">(ServerPing)</span></td><td>C&rarr;S</td><td>Keep-alive.</td><td>— (empty)</td></tr>
+<tr><td>34</td><td>SendSpeed <span class="type">(SendDownloadSpeed, obsolete)</span></td><td>C&rarr;S</td><td>Legacy speed report.</td><td>username, speed</td></tr>
+<tr><td>35</td><td>SharedFoldersAndFiles <span class="type">(SharedFoldersFiles)</span></td><td>C&rarr;S</td><td>Report your shared folder and file counts.</td><td>folderCount, fileCount</td></tr>
+<tr><td>36</td><td>GetUserStats</td><td>C&rarr;S, S&rarr;C</td><td>Query/receive a user's avg speed and share counts.</td><td>username &rarr; speed, fileCount, folderCount</td></tr>
+<tr><td>41</td><td>KickedFromServer <span class="type">(Relogged)</span></td><td>S&rarr;C</td><td>Your account logged in elsewhere; you are being disconnected.</td><td>— (empty)</td></tr>
+<tr><td>42</td><td>UserSearch</td><td>C&rarr;S</td><td>Search a single user's shares.</td><td>username, token, query</td></tr>
+<tr><td>51 / 52</td><td>InterestAdd / InterestRemove</td><td>C&rarr;S</td><td>Add/remove a "thing I like".</td><td>item</td></tr>
+<tr><td>54 / 56</td><td>GetRecommendations / GetGlobalRecommendations</td><td>both</td><td>Recommendation queries.</td><td>—</td></tr>
+<tr><td>64</td><td>RoomList</td><td>C&rarr;S, S&rarr;C</td><td>Fetch the list of public rooms and their user counts.</td><td>&rarr; rooms[], counts[]</td></tr>
+<tr><td>66</td><td>GlobalAdminMessage <span class="type">(AdminMessage)</span></td><td>S&rarr;C</td><td>Broadcast from server admin.</td><td>message</td></tr>
+<tr><td>69</td><td>PrivilegedUsers</td><td>S&rarr;C</td><td>List of currently-privileged (donor) usernames.</td><td>users[]</td></tr>
+<tr><td>71</td><td>HaveNoParents <span class="type">(HaveNoParent)</span></td><td>C&rarr;S</td><td>Tell the server you have no distributed parent (request candidates).</td><td>bool</td></tr>
+<tr><td>73</td><td>ParentsIP <span class="type">(ParentIP, deprecated)</span></td><td>C&rarr;S</td><td>Report your parent's IP.</td><td>ip</td></tr>
+<tr><td>83</td><td>ParentMinSpeed</td><td>S&rarr;C</td><td>Minimum avg speed required to be a branch parent.</td><td>speed</td></tr>
+<tr><td>84</td><td>ParentSpeedRatio</td><td>S&rarr;C</td><td>Divisor: <code>maxChildren = avgSpeed / ratio</code>.</td><td>ratio</td></tr>
+<tr><td>92</td><td>CheckPrivileges</td><td>C&rarr;S, S&rarr;C</td><td>Query remaining privileged time (seconds).</td><td>&rarr; seconds</td></tr>
+<tr><td>93</td><td>EmbeddedMessage</td><td>S&rarr;C</td><td>A distributed message (usually a search) wrapped by the server for branch roots. See <a href="#distributed-messages">Distributed</a>.</td><td>distrib-code, distrib-payload</td></tr>
+<tr><td>100</td><td>AcceptChildren</td><td>C&rarr;S</td><td>Tell the server whether you accept distributed children.</td><td>bool</td></tr>
+<tr><td>102</td><td>NetInfo <span class="type">(PossibleParents)</span></td><td>S&rarr;C</td><td>List of candidate parent peers (username, ip, port).</td><td>parents[]</td></tr>
+<tr><td>103</td><td>WishlistSearch</td><td>C&rarr;S</td><td>Submit a wishlist (periodic background) search.</td><td>token, query</td></tr>
+<tr><td>104</td><td>WishlistInterval</td><td>S&rarr;C</td><td>How often (seconds) the client may re-run wishlist searches.</td><td>interval</td></tr>
+<tr><td>113&ndash;116</td><td>RoomTickers / RoomTickerAdd / RoomTickerRemove / SetRoomTicker</td><td>both</td><td>Room "ticker" (status line) management.</td><td>room, ticker(s)</td></tr>
+<tr><td>120</td><td>RoomSearch</td><td>C&rarr;S</td><td>Search the shares of everyone in a room.</td><td>room, token, query</td></tr>
+<tr><td>121</td><td>SendUploadSpeed</td><td>C&rarr;S</td><td>Report upload speed after a completed transfer (feeds your avg speed).</td><td>speed</td></tr>
+<tr><td>123</td><td>GivePrivileges</td><td>C&rarr;S</td><td>Gift privileged days to another user.</td><td>username, days</td></tr>
+<tr><td>126 / 127</td><td>BranchLevel / BranchRoot</td><td>C&rarr;S</td><td>Report your position in the distributed tree to the server.</td><td>level / rootUsername</td></tr>
+<tr><td>133&ndash;148</td><td>PrivateRoom* family</td><td>both</td><td>Private-room membership, ownership and operator management.</td><td>room, username</td></tr>
+<tr><td>149</td><td>MessageUsers</td><td>C&rarr;S</td><td>Send a PM to a list of users.</td><td>users[], message</td></tr>
+<tr><td>150&ndash;152</td><td>AskPublicChat / StopPublicChat / PublicChat <span class="type">(Join/Leave/GlobalRoom)</span></td><td>both</td><td>Subscribe to the global public-chat feed.</td><td>room, username, message</td></tr>
+<tr><td>160</td><td>ExcludedSearchPhrases</td><td>S&rarr;C</td><td>Server-supplied phrases to exclude from outgoing search results.</td><td>phrases[]</td></tr>
+<tr><td>1001</td><td>CannotConnect <span class="type">(CantConnectToPeer)</span></td><td>both</td><td>Indirect connect failed; reported by/relayed to the other party.</td><td>token, username</td></tr>
+<tr><td>1002 / 1003</td><td>CannotCreateRoom / CannotJoinRoom</td><td>S&rarr;C</td><td>Room create/join rejected.</td><td>room</td></tr>
+</tbody>
+</table></div>
+<p class="src-ref">Codes: Soulseek.NET <code>src/Messaging/MessageCode.cs</code> (<code>MessageCode.Server</code>) cross-checked against Nicotine+ SLSKPROTOCOL.html. The table omits obsolete/deprecated server codes (e.g. 11/12 Ignore, 25 FileSearchRoom, 33/34 connect-token/speed, 40 QueuedDownloads, 65 ExactFileSearch, 67/68, 86&ndash;91, 122, 124/125, 129/130, 153) — present in the enum but not used by current clients.</p>
+
+<h2 id="init-messages">Peer-init (connection) messages</h2>
+<p>These two messages are <strong>not</strong> in the peer message space — they have their own tiny <span class="type">uint8</span>-coded numbering and are sent as the <em>first</em> message on a freshly-opened peer, file ('F') or distributed ('D') connection to declare what the connection is for.</p>
+
+<div class="msg-card">
+  <div class="msg-head"><span class="msg-code">Code 1</span> <strong>PeerInit</strong> <span class="badge dir">direct</span></div>
+  <p>Sent by the connection <em>initiator</em> when it could reach the remote peer's listen port directly. Declares who you are and what the connection carries.</p>
+  <pre><code>&lt;uint32 length&gt;&lt;uint8 code=1&gt;
+&lt;string  username&gt;        // the initiator's own username
+&lt;string  connectionType&gt;  // "P" (peer), "F" (file), or "D" (distributed)
+&lt;uint32  token&gt;           // typically 0 for a direct PeerInit</code></pre>
+</div>
+
+<div class="msg-card">
+  <div class="msg-head"><span class="msg-code">Code 0</span> <strong>PierceFirewall</strong> <span class="badge dir">indirect</span></div>
+  <p>Sent by a peer that received a <code>ConnectToPeer</code> relay and is now connecting <em>back</em> to the requester (firewall traversal). Carries only the token that ties it to the original request.</p>
+  <pre><code>&lt;uint32 length&gt;&lt;uint8 code=0&gt;
+&lt;uint32 token&gt;            // echoes the token from ConnectToPeer (code 18)</code></pre>
+</div>
+<p class="src-ref">Codes: Soulseek.NET <code>MessageCode.Initialization</code> (PierceFirewall = 0, PeerInit = 1).</p>
+
+<h2 id="peer-messages">Peer messages</h2>
+<p>Sent over a 'P' connection between two peers after the init handshake. Codes are the Soulseek.NET <code>MessageCode.Peer</code> enum.</p>
+
+<div class="table-wrap"><table>
+<thead><tr><th>Code</th><th>Name (Soulseek.NET)</th><th>Dir</th><th>Purpose</th><th>Key fields</th></tr></thead>
+<tbody>
+<tr><td>4</td><td>BrowseRequest <span class="type">(SharedFileListRequest)</span></td><td>peer</td><td>Ask a peer for its entire shared-file listing.</td><td>— (empty)</td></tr>
+<tr><td>5</td><td>BrowseResponse <span class="type">(SharedFileListResponse)</span></td><td>peer</td><td>Reply with the full share tree. Payload is <strong>zlib-compressed</strong>.</td><td>directories[] (each: name, files[])</td></tr>
+<tr><td>8</td><td>SearchRequest <span class="type">(FileSearchRequest, obsolete)</span></td><td>peer</td><td>Legacy direct peer search (superseded by distributed search).</td><td>token, query</td></tr>
+<tr><td>9</td><td>SearchResponse <span class="type">(FileSearchResponse)</span></td><td>peer</td><td>Search results for a token. Payload is <strong>zlib-compressed</strong>. See <a href="#search-delivery">Search delivery</a>.</td><td>username, token, files[], freeSlot, avgSpeed, queueLength, lockedFiles[]</td></tr>
+<tr><td>15</td><td>InfoRequest <span class="type">(UserInfoRequest)</span></td><td>peer</td><td>Ask a peer for its profile (description, picture, slots).</td><td>— (empty)</td></tr>
+<tr><td>16</td><td>InfoResponse <span class="type">(UserInfoResponse)</span></td><td>peer</td><td>Profile reply.</td><td>description, hasPicture, picture(bytes), uploadSlots, queueLength, hasFreeSlot</td></tr>
+<tr><td>36</td><td>FolderContentsRequest</td><td>peer</td><td>Ask for the files within one specific folder.</td><td>token, folder</td></tr>
+<tr><td>37</td><td>FolderContentsResponse</td><td>peer</td><td>Reply with that folder's contents. <strong>zlib-compressed</strong>.</td><td>token, folder, files[]</td></tr>
+<tr><td>40</td><td>TransferRequest</td><td>peer</td><td>Propose a transfer. See <a href="#file-transfer">File transfer</a>.</td><td>direction (0=dl/1=ul), token, filename, [size]</td></tr>
+<tr><td>41</td><td>TransferResponse</td><td>peer</td><td>Accept or reject a TransferRequest.</td><td>token, allowed (bool), [size] / [reason]</td></tr>
+<tr><td>43</td><td>QueueDownload <span class="type">(QueueUpload)</span></td><td>peer</td><td>Ask the remote peer to enqueue a file for upload to you.</td><td>filename</td></tr>
+<tr><td>44</td><td>PlaceInQueueResponse</td><td>peer</td><td>Report a file's current position in the upload queue.</td><td>filename, place</td></tr>
+<tr><td>46</td><td>UploadFailed</td><td>peer</td><td>Notify that an upload failed/aborted (retryable).</td><td>filename</td></tr>
+<tr><td>50</td><td>UploadDenied <span class="type">(QueueFailed)</span></td><td>peer</td><td>Reject a queued request with a reason string (e.g. "Queued", "File not shared").</td><td>filename, reason</td></tr>
+<tr><td>51</td><td>PlaceInQueueRequest</td><td>peer</td><td>Ask for the current queue position of a file.</td><td>filename</td></tr>
+</tbody>
+</table></div>
+<div class="note callout"><span class="label">Compression</span><p>BrowseResponse (5), SearchResponse (9) and FolderContentsResponse (37) payloads are <strong>zlib (RFC 1950) compressed</strong> after the standard length/code prefix. A native implementer must zlib-inflate the payload before parsing the file list. The length prefix counts the compressed bytes.</p></div>
+<p class="src-ref">Codes: Soulseek.NET <code>MessageCode.Peer</code> cross-checked against Nicotine+. Obsolete/deprecated peer codes (1 PrivateMessage, 10 PrivateRoomInvitation, 14, 33/34, 42 UploadPlacehold, 47&ndash;49, 52) omitted from the table.</p>
+
+<h2 id="distributed-messages">Distributed messages</h2>
+<p>Soulseek's search is not flooded from the server to every client directly. Instead the server maintains a <strong>distributed broadcast tree</strong>: each client tries to attach to a <em>parent</em> and may accept <em>children</em>. The server injects each search at the tree roots, and it propagates down. Distributed messages travel over 'D' connections and use <span class="type">uint8</span> codes (Soulseek.NET <code>MessageCode.Distributed</code>).</p>
+
+<div class="table-wrap"><table>
+<thead><tr><th>Code</th><th>Name (Soulseek.NET)</th><th>Dir</th><th>Purpose</th><th>Key fields</th></tr></thead>
+<tbody>
+<tr><td>0</td><td>Ping <span class="type">(DistribPing)</span></td><td>distributed</td><td>Keep-alive between parent and child.</td><td>— (empty)</td></tr>
+<tr><td>3</td><td>SearchRequest <span class="type">(DistribSearch)</span></td><td>distributed</td><td>A search to be matched against your shares and forwarded unchanged to your children.</td><td>unknown, username, token, query</td></tr>
+<tr><td>4</td><td>BranchLevel <span class="type">(DistribBranchLevel)</span></td><td>distributed</td><td>The sender's distance from the root. You adopt the sender as parent and set your level = theirs + 1.</td><td>level (int32)</td></tr>
+<tr><td>5</td><td>BranchRoot <span class="type">(DistribBranchRoot)</span></td><td>distributed</td><td>The username of the sender's branch root, propagated downward.</td><td>rootUsername</td></tr>
+<tr><td>7</td><td>ChildDepth <span class="type">(DistribChildDepth, obsolete)</span></td><td>distributed</td><td>Legacy child-depth accounting.</td><td>depth</td></tr>
+<tr><td>93</td><td>EmbeddedMessage <span class="type">(DistribEmbeddedMessage)</span></td><td>S&rarr;C</td><td>A distributed message wrapped inside a server message (used to deliver searches to branch roots).</td><td>distrib-code, distrib-payload</td></tr>
+</tbody>
+</table></div>
+
+<h3 id="tree-mechanics">Branch root, branch level &amp; search flow</h3>
+<ul>
+<li><strong>Branch root</strong> — a top-level node directly fed searches by the central server (via <code>EmbeddedMessage</code>, code 93). Its branch level is <code>0</code>.</li>
+<li><strong>Branch level</strong> — a node's depth in the tree. On adopting a parent that sends <code>BranchLevel(n)</code>, the child sets its own level to <code>n + 1</code> and re-advertises that to its own children. A level of <code>0</code> means the sender <em>is</em> a branch root.</li>
+<li><strong>Parent selection</strong> — the server hands out candidate parents via <code>NetInfo</code> (code 102) when you advertise <code>HaveNoParents</code> (71). You connect to candidates; the first one that sends you a <code>SearchRequest</code> (with its <code>BranchLevel</code>/<code>BranchRoot</code>) becomes your effective parent.</li>
+<li><strong>Child capacity</strong> — bounded by <code>ParentMinSpeed</code> (83) and <code>ParentSpeedRatio</code> (84): roughly <code>maxChildren = yourAvgSpeed / ratio</code>. slskd additionally caps children via its own <code>DistributedNetwork.ChildLimit</code> option.</li>
+<li><strong>Search propagation</strong> — a node receiving a <code>DistribSearch</code> (3): (a) matches it against its own shares and, if it has hits, opens a fresh 'P' connection back to the searcher to deliver a <code>SearchResponse</code> (9); and (b) forwards the <em>identical raw</em> <code>DistribSearch</code> to each of its children. Results therefore return <strong>out-of-band</strong> via direct peer connections, never back up the tree.</li>
+</ul>
+
+<pre><code>            central server
+                 |  EmbeddedMessage(93){ DistribSearch }
+                 v
+            [branch root]  level 0
+            /            \
+       [peer]            [peer]   level 1   (each forwards DistribSearch to its children)
+       /    \                \
+   [peer] [peer]            [peer]  level 2
+      |
+   match? --yes--> open NEW 'P' conn to the original searcher
+                   --> PeerInit(type 'P') --> SearchResponse(code 9)
+</code></pre>
+<p class="src-ref">Codes: Soulseek.NET <code>MessageCode.Distributed</code>. Tree-state behaviour exposed by slskd via <code>DistributedNetworkInfo</code> (HasParent, BranchLevel, BranchRoot, Children, ChildLimit) — src/slskd/Application.cs:1136&ndash;1162; options at src/slskd/Application.cs:437&ndash;439.</p>
+
+<h2 id="connection-establishment">Connection establishment</h2>
+<p>Because most users are behind NAT/firewalls, the protocol supports both direct and server-mediated ("indirect") peer connection setup. Every peer connection is typed: <code>'P'</code> (peer messages), <code>'F'</code> (file transfer), or <code>'D'</code> (distributed). The dance below applies to all three types; only the type string in <code>PeerInit</code> / <code>ConnectToPeer</code> changes.</p>
+
+<h3 id="direct-path">Direct path (initiator can reach the target)</h3>
+<ol>
+<li>Initiator resolves the target's address via <code>GetPeerAddress</code> (server code 3) → gets <code>ip:port</code>.</li>
+<li>Initiator opens a TCP connection to that <code>ip:port</code>.</li>
+<li>Initiator sends <code>PeerInit</code> (init code 1) = <code>{ ownUsername, connectionType, token }</code>.</li>
+<li>Connection is now established; domain messages flow.</li>
+</ol>
+
+<h3 id="indirect-path">Indirect path (direct connect fails — firewall traversal)</h3>
+<ol>
+<li>Initiator picks a token and sends <code>ConnectToPeer</code> (server code 18) = <code>{ token, targetUsername, connectionType }</code> to the server.</li>
+<li>The server relays a <code>ConnectToPeer</code> to the <em>target</em>, carrying the same token plus the initiator's <code>ip:port</code>.</li>
+<li>The target opens a TCP connection <em>back</em> to the initiator's <code>ip:port</code> and sends <code>PierceFirewall</code> (init code 0) = <code>{ token }</code>.</li>
+<li>The initiator matches the token to its pending request; the connection is established and proceeds as if direct.</li>
+<li><strong>Failure:</strong> if the target also cannot connect back, it sends <code>CannotConnect</code> (server code 1001) <code>{ token, username }</code>, which the server relays to the initiator so it can give up.</li>
+</ol>
+
+<div class="note callout"><span class="label">Note</span><p>In practice a client races both paths: it sends <code>PeerInit</code> directly <em>and</em> requests an indirect <code>ConnectToPeer</code>, then uses whichever succeeds first (matching on the token). Soulseek.NET implements this race internally; slskd never sees the individual init messages — it only configures the listen endpoint and reacts to high-level connect/transfer events.</p></div>
+<p class="src-ref">slskd configures the inbound listener at src/slskd/Application.cs:433&ndash;435 (<code>listenIPAddress</code>, <code>listenPort</code>, <code>enableListener: true</code>); default listen port <code>50300</code> (src/slskd/Core/Options.cs:1770) on <code>0.0.0.0</code> (Options.cs:1761). Outbound resolution uses <code>ConnectToUserAsync</code> (src/slskd/Transfers/Downloads/DownloadService.cs:346).</p>
+
+<h2 id="file-transfer">File transfer over an 'F' connection</h2>
+<p>A file download is negotiated over the 'P' connection, then the bytes flow over a separate 'F' connection keyed by a token. The roles are inverted from intuition: in Soulseek the <strong>uploader drives the transfer</strong>.</p>
+
+<h3 id="transfer-negotiation">Negotiation</h3>
+<ol>
+<li>Downloader sends <code>QueueDownload</code> (peer code 43) <code>{ filename }</code> to the uploader (or a <code>TransferRequest</code> with direction = download).</li>
+<li>When the uploader has a free slot, it sends <code>TransferRequest</code> (peer code 40) <code>{ direction=1 (upload), token, filename, size }</code>.</li>
+<li>Downloader replies <code>TransferResponse</code> (peer code 41) <code>{ token, allowed=true }</code> (or <code>allowed=false, reason</code>).</li>
+<li>The uploader opens a new <strong>'F'</strong> connection to the downloader. Its first message after <code>PeerInit(type='F')</code> is the bare <span class="type">uint32</span> <strong>token</strong> identifying which negotiated transfer this connection carries.</li>
+<li>The downloader then sends an 8-byte <span class="type">uint64</span> <strong>file offset</strong> (the resume point; <code>0</code> for a fresh download).</li>
+<li>The uploader streams the raw file bytes from that offset to EOF. There is no per-chunk framing — the 'F' connection is a plain byte pipe; completion is detected when <code>size - offset</code> bytes have been received.</li>
+</ol>
+
+<h3 id="queueing-control">Queue-position control</h3>
+<div class="table-wrap"><table>
+<thead><tr><th>Message</th><th>Code</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td>PlaceInQueueRequest</td><td>peer 51</td><td>Downloader asks "where am I in your upload queue?"</td></tr>
+<tr><td>PlaceInQueueResponse</td><td>peer 44</td><td>Uploader answers with <code>{ filename, place }</code>.</td></tr>
+<tr><td>UploadDenied</td><td>peer 50</td><td>Uploader rejects with a reason (e.g. file not shared, banned).</td></tr>
+<tr><td>UploadFailed</td><td>peer 46</td><td>Transfer aborted mid-stream; the downloader may retry.</td></tr>
+</tbody>
+</table></div>
+<div class="warn callout"><span class="label">Offset is for resume, not range requests</span><p>The 8-byte offset is intended for resuming an interrupted download. Repeatedly reconnecting with different offsets to fetch arbitrary chunks is non-idiomatic and tends to be treated as a failed transfer by the uploader. Request the whole remaining file in one stream.</p></div>
+<p>See <a href="transfers.html">Transfers &amp; Queueing</a> for how slskd models this (upload slots, queue forecasting, place-in-queue API). slskd drives downloads with <code>EnqueueDownloadAsync</code> and queries position via <code>GetDownloadPlaceInQueueAsync</code> (src/slskd/Transfers/Downloads/DownloadService.cs:723).</p>
+
+<h2 id="search-delivery">Search delivery end-to-end</h2>
+<p>Putting the domains together, here is the full lifecycle of one global search from the searcher's point of view:</p>
+<ol>
+<li><strong>Submit.</strong> Searcher picks a <span class="type">uint32</span> token and sends <code>FileSearch</code> (server code 26) <code>{ token, query }</code> to the server. (A wishlist search uses code 103; a single-user search uses code 42; a room search code 120.)</li>
+<li><strong>Inject.</strong> The server wraps the query as a <code>DistribSearch</code> and pushes it to the branch roots via <code>EmbeddedMessage</code> (server code 93 / distributed code 93), carrying the searcher's username and token.</li>
+<li><strong>Propagate.</strong> Each node forwards the raw <code>DistribSearch</code> (distributed code 3) down to its children, fanning out across the whole tree.</li>
+<li><strong>Match.</strong> Every peer matches the query against its own shares.</li>
+<li><strong>Reply.</strong> A peer with hits opens a fresh 'P' connection back to the searcher (direct or indirect per <a href="#connection-establishment">Connection establishment</a>) and sends <code>SearchResponse</code> (peer code 9) containing: <code>username</code>, the original <code>token</code>, the matched <code>files[]</code>, a <code>hasFreeUploadSlot</code> flag, the responder's <code>uploadSpeed</code> (avg, server-reported), the <code>queueLength</code>, and a list of <code>lockedFiles[]</code> (results the searcher is not permitted to download). The payload is zlib-compressed.</li>
+<li><strong>Correlate.</strong> The searcher matches each inbound response by token back to the original query and aggregates results until a timeout elapses.</li>
+</ol>
+
+<p>When slskd is the <em>responder</em>, it builds the reply in <code>SearchResponseResolver</code>:</p>
+<pre><code>response = new SearchResponse(
+    Client.Username,
+    token,
+    uploadSpeed: State.CurrentValue.User.Statistics.AverageSpeed,
+    hasFreeUploadSlot: forecastedPosition == 0,
+    queueLength: forecastedPosition,
+    fileList: results);</code></pre>
+<p class="src-ref">Source: src/slskd/Application.cs:1635&ndash;1768 (SearchResponseResolver). Returning <code>null</code> (or an empty file list) suppresses the reply, so no response is sent for zero matches. When searching, slskd calls <code>Client.SearchAsync(...)</code> (src/slskd/Search/SearchService.cs:309) and collects <code>SearchResponse</code> objects. See <a href="search.html">Search</a>.</p>
+
+<h2 id="slskd-mapping">How slskd maps onto the protocol</h2>
+<p>slskd does <strong>not</strong> implement any of the bytes above. It constructs a single <code>SoulseekClient</code> (Soulseek.NET) and registers high-level handlers; the library owns all framing, connection management, the distributed tree, NAT traversal and transfer plumbing. An application author building on slskd should use its <a href="rest-api.html">REST API</a> and <a href="realtime-api.html">real-time events</a> rather than re-implementing the wire protocol — re-implement the protocol only if you are writing a fully native client without slskd.</p>
+
+<div class="table-wrap"><table>
+<thead><tr><th>Wire interaction</th><th>Soulseek.NET surface slskd uses</th><th>slskd source</th></tr></thead>
+<tbody>
+<tr><td>Login + network version</td><td><code>new SoulseekClient(minorVersion, …)</code></td><td>Program.cs:707&ndash;714 (minor 760)</td></tr>
+<tr><td>Listen port / inbound peers</td><td><code>SoulseekClientOptionsPatch(listenPort, enableListener)</code></td><td>Application.cs:432&ndash;456</td></tr>
+<tr><td>Distributed tree config</td><td><code>enableDistributedNetwork</code>, <code>distributedChildLimit</code>, <code>acceptDistributedChildren</code></td><td>Application.cs:437&ndash;439</td></tr>
+<tr><td>Outgoing search (FileSearch 26)</td><td><code>Client.SearchAsync(query, …)</code></td><td>SearchService.cs:309</td></tr>
+<tr><td>Incoming search (SearchResponse 9)</td><td><code>searchResponseResolver</code> callback</td><td>Application.cs:453, 1635</td></tr>
+<tr><td>Browse (BrowseRequest/Response 4/5)</td><td><code>Client.BrowseAsync(user)</code> / <code>browseResponseResolver</code></td><td>UsersController.cs:135; Application.cs:449, 875</td></tr>
+<tr><td>User info (InfoRequest/Response 15/16)</td><td><code>Client.GetUserInfoAsync(user)</code> / <code>userInfoResolver</code></td><td>UserService.cs:234; Application.cs:448</td></tr>
+<tr><td>Folder contents (36/37)</td><td><code>directoryContentsResolver</code></td><td>Application.cs:450</td></tr>
+<tr><td>Download negotiation + 'F' stream</td><td><code>Client.EnqueueDownloadAsync</code>, <code>enqueueDownload</code> resolver</td><td>Application.cs:451; DownloadService.cs</td></tr>
+<tr><td>Queue position (51/44)</td><td><code>Client.GetDownloadPlaceInQueueAsync</code> / <code>placeInQueueResolver</code></td><td>DownloadService.cs:723; Application.cs:454</td></tr>
+<tr><td>Indirect connect (ConnectToPeer 18)</td><td><code>Client.ConnectToUserAsync</code></td><td>DownloadService.cs:346</td></tr>
+<tr><td>Excluded phrases (160)</td><td>applied to outgoing responses (<code>ExcludedSearchPhrases</code>)</td><td>Application.cs:1704</td></tr>
+</tbody>
+</table></div>
+<p class="src-ref">Sources: src/slskd/Program.cs, src/slskd/Application.cs, src/slskd/Search/SearchService.cs, src/slskd/Users/UserService.cs, src/slskd/Transfers/Downloads/DownloadService.cs. Wire-level codes/structures are not present in this repository; they live in the Soulseek.NET dependency and are documented here from that library's source and Nicotine+.</p>
+
+    <div class="page-nav-links">
+      <a class="prev" href="architecture.html"><span class="dir">&larr; Previous</span><br><span class="ttl">Architecture &amp; Concepts</span></a>
+      <a class="next" href="data-model.html"><span class="dir">Next &rarr;</span><br><span class="ttl">Data Model &amp; Types</span></a>
+    </div>
+    <footer class="page-footer">
+      <span>slskd / Soulseek Protocol &amp; Model Specification &middot; derived from source (slskd, Soulseek.NET 10.0.1) &middot; AGPL-3.0</span>
+      <span>Not an official Soulseek document.</span>
+    </footer>
+  </main>
+</div>
+</div>
+<script src="script.js"></script>
+</body>
+</html>
