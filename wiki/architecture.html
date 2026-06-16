@@ -246,7 +246,7 @@
 <tr><td>Disabled</td><td><code>false</code></td><td><code>--slsk-no-dnet</code></td><td><code>distributed_network.disabled</code></td><td>If true, slskd obtains no parent and no children and receives <em>no</em> distributed search requests. Only safe when sharing nothing.</td></tr>
 <tr><td>Disable children</td><td><code>false</code></td><td><code>--slsk-dnet-no-children</code></td><td><code>distributed_network.disable_children</code></td><td>Still gets a parent (and requests) but refuses child connections — lighter load.</td></tr>
 <tr><td>Child limit</td><td><span class="type">25</span> <span class="type">int32</span></td><td><code>--slsk-dnet-children</code></td><td><code>distributed_network.child_limit</code></td><td>Maximum number of distributed children accepted.</td></tr>
-<tr><td>Logging</td><td><code>false</code></td><td><code>--slsk-dnet-logging</code></td><td>—</td><td>Verbose distributed-network diagnostics.</td></tr>
+<tr><td>Logging</td><td><code>false</code></td><td><code>--slsk-dnet-logging</code></td><td><code>distributed_network.logging</code></td><td>Verbose distributed-network diagnostics.</td></tr>
 </tbody>
 </table>
 </div>
@@ -263,8 +263,8 @@
 │  ┌──────────── Web UI (wwwroot, React SPA) ──────────────┐            │
 │  │     served as static files; talks to the API below     │            │
 │  └───────────────────────┬────────────────────────────────┘            │
-│        REST controllers   │   SignalR hubs (/hub/application, /logs,   │
-│        (/api/v0/…)         │   /search, /relay)                        │
+│        REST controllers   │   SignalR hubs (/hub/application ·        │
+│        (/api/v0/…)         │   /hub/logs · /hub/search · /hub/relay)   │
 │  ┌────────────────────────┴────────────────────────────────┐          │
 │  │  Application (IApplication / IHostedService) — orchestrator│        │
 │  │  Managed concerns:  Search · Transfers(up/down) · Users ·  │        │

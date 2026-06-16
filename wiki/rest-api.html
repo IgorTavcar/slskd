@@ -130,7 +130,7 @@
 <tr><td><span class="type">200</span> OK / <span class="type">201</span> Created / <span class="type">204</span> No Content</td><td>Success (body present / created / no body).</td></tr>
 <tr><td><span class="type">205</span> Reset Content</td><td>Server connect: a connection attempt was already in progress and was restarted.</td></tr>
 <tr><td><span class="type">207</span> Multi-Status</td><td>Download batch: some files enqueued, some failed.</td></tr>
-<tr><td><span class="type">304</span> Not Modified</td><td>Idempotent no-op (e.g. cancelling a search that is not running, joining an already-joined room).</td></tr>
+<tr><td><span class="type">304</span> Not Modified</td><td>Declared via <code>ProducesResponseType</code> on <code>SearchesController.Cancel</code> and <code>RoomsController.JoinRoom</code> but never actually returned. The real responses for an already-joined room or a cancelled/no-op search are <span class="type">200</span> (<span class="type">404</span> if the resource is unknown).</td></tr>
 <tr><td><span class="type">400</span> Bad Request</td><td>Malformed input; message body describes the problem.</td></tr>
 <tr><td><span class="type">401</span> Unauthorized</td><td>Missing/invalid credentials, or failed login.</td></tr>
 <tr><td><span class="type">403</span> Forbidden</td><td>Authenticated but not permitted; also returned when a feature is disabled (remote config/file management) or the daemon is running as a relay <em>agent</em>.</td></tr>
@@ -330,7 +330,7 @@
 
 <h3 id="searches-cancel">Stop a search</h3>
 <div class="endpoint"><span class="badge put">PUT</span><span class="path">/api/v0/searches/{id}</span><span class="auth"><span class="badge role any">Any</span></span></div>
-<p>Cancels an in-progress search. Returns <span class="type">200</span>; <span class="type">404</span> if the search id is unknown. (A search that is not running is effectively a no-op; the documented <span class="type">304</span> is reserved for the not-in-progress case.)</p>
+<p>Cancels an in-progress search. Returns <span class="type">200</span>; <span class="type">404</span> if the search id is unknown. A search that is not running is effectively a no-op and still returns <span class="type">200</span>. (A <span class="type">304</span> is declared via <code>ProducesResponseType</code> but never actually returned.)</p>
 
 <h3 id="searches-delete">Delete a search</h3>
 <div class="endpoint"><span class="badge delete">DELETE</span><span class="path">/api/v0/searches/{id}</span><span class="auth"><span class="badge role any">Any</span></span></div>
@@ -657,7 +657,8 @@
 
 <h3 id="events-raise">Raise a sample event</h3>
 <div class="endpoint"><span class="badge post">POST</span><span class="path">/api/v0/events/{type}</span><span class="auth"><span class="badge role any">Any</span></span></div>
-<p><code>{type}</code> is an <code>EventType</code> name (case-insensitive), one of <code>DownloadFileComplete</code>, <code>DownloadDirectoryComplete</code>, <code>UploadFileComplete</code>, <code>PrivateMessageReceived</code>, <code>RoomMessageReceived</code>, <code>Noop</code>. Body: an optional <code>disambiguator</code> string used to vary the generated sample. Raises a randomly-populated event of that type onto the event bus and returns <span class="type">201</span> with the generated <code>Event</code>. The sentinel types <code>None</code> and <code>Any</code> cannot be raised → <span class="type">400</span>; an unknown type → <span class="type">400</span> with the list of valid names.</p>
+<p><code>{type}</code> is an <code>EventType</code> name (case-insensitive). The six types that successfully generate a sample and return <span class="type">201</span> are <code>DownloadFileComplete</code>, <code>DownloadDirectoryComplete</code>, <code>UploadFileComplete</code>, <code>PrivateMessageReceived</code>, <code>RoomMessageReceived</code>, <code>Noop</code>. Body: an optional <code>disambiguator</code> string used to vary the generated sample. Raises a randomly-populated event of that type onto the event bus and returns <span class="type">201</span> with the generated <code>Event</code>. The sentinel types <code>None</code> and <code>Any</code> cannot be raised → <span class="type">400</span>; an unknown type → <span class="type">400</span> with the list of valid names.</p>
+<div class="warn callout"><span class="label">Caveat</span><p>The <code>EventType</code> enum also defines <code>SoulseekClientConnected</code> and <code>SoulseekClientDisconnected</code>, and the <span class="type">400</span> "valid names" message (built from <code>Enum.GetNames</code> minus <code>Any</code>/<code>None</code>) advertises them as accepted. However, they parse past the guard and then hit the sample-generation switch's <code>default</code> case, which throws → <span class="type">500</span> rather than producing a sample. Only the six types listed above actually yield a <span class="type">201</span>.</p></div>
 <div class="note callout"><span class="label">Note</span><p>The "loopback" diagnostic endpoint lives on the Application controller — <span class="badge post">POST</span> <code>/api/v0/application/loopback</code> — not on Events.</p></div>
 <p class="src-ref">Source: src/slskd/Events/API/EventsController.cs</p>
 

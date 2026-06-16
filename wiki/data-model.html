@@ -61,11 +61,11 @@
 <h1>Data Model &amp; Types</h1>
 <p class="page-lede">This page is the consolidated type catalog for the slskd domain model — every entity and enumeration the slskd HTTP/SignalR API emits, with field tables and representative JSON. It is the canonical reference that the <a href="search.html">Search</a>, <a href="transfers.html">Transfers</a>, <a href="users-rooms.html">Users &amp; Rooms</a> and <a href="shares.html">Shares</a> pages link into. The wire-level encoding of these same concepts (message codes, byte layout, attribute tuples) is covered in <a href="soulseek-protocol.html">Soulseek Wire Protocol</a>; this page describes the decoded, JSON-shaped form.</p>
 
-<div class="note callout"><span class="label">Serialization conventions</span><p>All examples reflect the actual JSON slskd produces. Three rules apply uniformly, configured once in <code>Program.cs</code>:</p>
+<div class="note callout"><span class="label">Serialization conventions</span><p>All examples reflect the actual JSON slskd produces. Three rules apply, configured in <code>Program.cs</code> (the first two on both the REST and SignalR pipelines, the third on REST only):</p>
 <ul>
 <li><strong>camelCase property names.</strong> ASP.NET Core's default <code>JsonNamingPolicy.CamelCase</code> is in effect. A C# property <code>BytesTransferred</code> serializes as <code>bytesTransferred</code>. The slskd web client (<code>src/web/src/lib/*.js</code>) consumes camelCase exclusively, confirming the convention.</li>
 <li><strong>Enums serialize as strings.</strong> A <code>JsonStringEnumConverter</code> is registered for both the REST pipeline and the SignalR JSON protocol. <code>TransferDirection.Download</code> serializes as <code>"Download"</code>, not <code>0</code>. For <span class="type">[Flags]</span> enums (notably <a href="#transferstates"><code>TransferStates</code></a>) combined flags serialize as a comma-separated string, e.g. <code>"Completed, Succeeded"</code>.</li>
-<li><strong>Null properties are omitted.</strong> <code>DefaultIgnoreCondition = WhenWritingNull</code> means a field that is <code>null</code> does not appear in the payload at all. Treat the absence of a key as "null/not provided".</li>
+<li><strong>Null properties are omitted in REST responses.</strong> <code>DefaultIgnoreCondition = WhenWritingNull</code> is set on the REST pipeline (<code>AddJsonOptions</code>), so a field that is <code>null</code> does not appear in the payload at all — treat the absence of a key as "null/not provided". Note this is <em>not</em> configured on the SignalR JSON protocol (<code>AddJsonProtocol</code> registers only <code>IPAddressConverter</code> and <code>JsonStringEnumConverter</code>), so SignalR payloads may include explicit <code>null</code> values.</li>
 </ul>
 <p class="src-ref">Source: src/slskd/Program.cs (AddJsonOptions, AddJsonProtocol)</p></div>
 
@@ -207,7 +207,7 @@
     ]
   }
 ]</code></pre>
-<p class="src-ref">Source: src/slskd/Users/API/Controllers/UsersController.cs (BrowseAsync, GetDirectoryContentsAsync return <code>IEnumerable&lt;Directory&gt;</code>); Soulseek.NET 10.0.1 src/Directory.cs</p>
+<p class="src-ref">Source: src/slskd/Users/API/Controllers/UsersController.cs (the <code>Browse</code> and <code>Directory</code> actions return <code>IEnumerable&lt;Directory&gt;</code>; they call Soulseek.NET <code>Client.BrowseAsync</code> / <code>Client.GetDirectoryContentsAsync</code>); Soulseek.NET 10.0.1 src/Directory.cs</p>
 
 <h2 id="response">Response <span class="type">(search response)</span></h2>
 <p>A <code>Response</code> (<code>slskd.Search.Response</code>, projected from Soulseek.NET <code>SearchResponse</code>) is one peer's answer to a search. A <a href="#search">Search</a> aggregates many of these. The token correlates the response to the originating search request.</p>
@@ -678,7 +678,7 @@
 </tbody>
 </table></div>
 <p>A fully ready client is <code>Connected | LoggedIn</code> (<code>"Connected, LoggedIn"</code>, value <code>6</code>).</p>
-<p class="src-ref">Source: Soulseek.NET 10.0.1 src/SoulseekClientState.cs; usage in src/slskd/Application.cs</p>
+<p class="src-ref">Source: Soulseek.NET 10.0.1 src/SoulseekClientStates.cs; usage in src/slskd/Application.cs</p>
 
 <h3 id="searchstates">SearchStates <span class="type">[Flags]</span></h3>
 <p>The lifecycle state of a <a href="#search">Search</a>. <code>Completed</code> is the base terminal flag; the accompanying flag describes <em>why</em> it completed. <code>isComplete</code> on the Search entity is true whenever <code>Completed</code> is present.</p>

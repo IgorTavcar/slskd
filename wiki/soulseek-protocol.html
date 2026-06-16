@@ -158,7 +158,7 @@
 </table></div>
 <pre><code>Frame for Login("alice","secret", ...):
 
-41 00 00 00            length  = 0x41 = 65 bytes follow
+43 00 00 00            length  = 0x43 = 67 bytes follow
 01 00 00 00            code    = 1  (Login)
 05 00 00 00 61 6C 69 63 65          string "alice"   (len 5 + bytes)
 06 00 00 00 73 65 63 72 65 74       string "secret"  (len 6 + bytes)
@@ -378,7 +378,7 @@ Frame for FileSearch(token=0x2A, query="aphex twin"):
 </tbody>
 </table></div>
 <div class="warn callout"><span class="label">Offset is for resume, not range requests</span><p>The 8-byte offset is intended for resuming an interrupted download. Repeatedly reconnecting with different offsets to fetch arbitrary chunks is non-idiomatic and tends to be treated as a failed transfer by the uploader. Request the whole remaining file in one stream.</p></div>
-<p>See <a href="transfers.html">Transfers &amp; Queueing</a> for how slskd models this (upload slots, queue forecasting, place-in-queue API). slskd drives downloads with <code>EnqueueDownloadAsync</code> and queries position via <code>GetDownloadPlaceInQueueAsync</code> (src/slskd/Transfers/Downloads/DownloadService.cs:723).</p>
+<p>See <a href="transfers.html">Transfers &amp; Queueing</a> for how slskd models this (upload slots, queue forecasting, place-in-queue API). slskd drives downloads with <code>Client.DownloadAsync</code> (src/slskd/Transfers/Downloads/DownloadService.cs:1284) and queries position via <code>GetDownloadPlaceInQueueAsync</code> (src/slskd/Transfers/Downloads/DownloadService.cs:723).</p>
 
 <h2 id="search-delivery">Search delivery end-to-end</h2>
 <p>Putting the domains together, here is the full lifecycle of one global search from the searcher's point of view:</p>
@@ -412,10 +412,10 @@ Frame for FileSearch(token=0x2A, query="aphex twin"):
 <tr><td>Distributed tree config</td><td><code>enableDistributedNetwork</code>, <code>distributedChildLimit</code>, <code>acceptDistributedChildren</code></td><td>Application.cs:437&ndash;439</td></tr>
 <tr><td>Outgoing search (FileSearch 26)</td><td><code>Client.SearchAsync(query, …)</code></td><td>SearchService.cs:309</td></tr>
 <tr><td>Incoming search (SearchResponse 9)</td><td><code>searchResponseResolver</code> callback</td><td>Application.cs:453, 1635</td></tr>
-<tr><td>Browse (BrowseRequest/Response 4/5)</td><td><code>Client.BrowseAsync(user)</code> / <code>browseResponseResolver</code></td><td>UsersController.cs:135; Application.cs:449, 875</td></tr>
+<tr><td>Browse (BrowseRequest/Response 4/5)</td><td><code>Client.BrowseAsync(user)</code> / <code>browseResponseResolver</code></td><td>Users/API/Controllers/UsersController.cs:135; Application.cs:449, 875</td></tr>
 <tr><td>User info (InfoRequest/Response 15/16)</td><td><code>Client.GetUserInfoAsync(user)</code> / <code>userInfoResolver</code></td><td>UserService.cs:234; Application.cs:448</td></tr>
 <tr><td>Folder contents (36/37)</td><td><code>directoryContentsResolver</code></td><td>Application.cs:450</td></tr>
-<tr><td>Download negotiation + 'F' stream</td><td><code>Client.EnqueueDownloadAsync</code>, <code>enqueueDownload</code> resolver</td><td>Application.cs:451; DownloadService.cs</td></tr>
+<tr><td>Download negotiation + 'F' stream</td><td><code>Client.DownloadAsync</code> (outbound downloads) / <code>enqueueDownload</code> resolver (inbound upload requests)</td><td>DownloadService.cs:1284; Application.cs:451, 571</td></tr>
 <tr><td>Queue position (51/44)</td><td><code>Client.GetDownloadPlaceInQueueAsync</code> / <code>placeInQueueResolver</code></td><td>DownloadService.cs:723; Application.cs:454</td></tr>
 <tr><td>Indirect connect (ConnectToPeer 18)</td><td><code>Client.ConnectToUserAsync</code></td><td>DownloadService.cs:346</td></tr>
 <tr><td>Excluded phrases (160)</td><td>applied to outgoing responses (<code>ExcludedSearchPhrases</code>)</td><td>Application.cs:1704</td></tr>

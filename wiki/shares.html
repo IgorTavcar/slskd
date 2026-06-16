@@ -219,7 +219,7 @@
 <li>Insert a new <code>Scan</code> record with the serialized options.</li>
 <li>For each non-excluded share, recursively enumerate subdirectories (skipping <em>Hidden</em> and <em>System</em> attributes, ignoring inaccessible paths), discarding directories matched by a filter; then add the share roots themselves.</li>
 <li>Remove directories that fall under any excluded share (a directory is excluded if its physical path <em>starts with</em> an excluded share's local path).</li>
-<li>For each surviving directory, insert a masked <em>directory</em> row, then enumerate its files (non-recursive, skipping hidden/system). Each file matched by a filter is counted as <em>filtered</em> and skipped; the rest are read into a <a href="data-model.html#file">Soulseek.File</a> and inserted as masked <em>file</em> rows.</li>
+<li>For each surviving directory, insert a masked <em>directory</em> row, then enumerate its files (non-recursive, skipping hidden/system). Each enumerated file is first built into a <a href="data-model.html#file">Soulseek.File</a> (its metadata is read at this point); files whose path matches a filter are then counted as <em>filtered</em> and skipped (not inserted), while the rest are inserted as masked <em>file</em> rows.</li>
 <li>On completion, set <code>endedAt</code>, back up the cache database, and recompute per-share directory/file statistics.</li>
 </ol>
 
@@ -365,15 +365,15 @@
         "size": 31457280,
         "extension": "flac",
         "attributes": [
-          { "type": 1, "value": 220 },
-          { "type": 4, "value": 44100 },
-          { "type": 5, "value": 16 }
+          { "type": "Length", "value": 220 },
+          { "type": "SampleRate", "value": 44100 },
+          { "type": "BitDepth", "value": 16 }
         ]
       }
     ]
   }
 ]</code></pre>
-<div class="note callout"><span class="label">Note</span><p>In a browse response the <code>filename</code> is just the leaf name; the containing directory is given by the parent <code>Directory.name</code>. In <em>search results</em> the <code>filename</code> is the full masked path. The <code>attributes[].type</code> codes are the <a href="data-model.html#file">FileAttributeType</a> enum (1 = BitRate, 2 = Length, 3 = VariableBitRate, 4 = SampleRate, 5 = BitDepth — verify against data-model.html).</p></div>
+<div class="note callout"><span class="label">Note</span><p>In a browse response the <code>filename</code> is just the leaf name; the containing directory is given by the parent <code>Directory.name</code>. In <em>search results</em> the <code>filename</code> is the full masked path. The <code>attributes[].type</code> values are the <a href="data-model.html#file-attributes">FileAttributeType</a> enum, serialized as their member names by the global <code>JsonStringEnumConverter</code> (wire values 0 = BitRate, 1 = Length, 2 = VariableBitRate, 4 = SampleRate, 5 = BitDepth; 3 is unassigned).</p></div>
 <p class="src-ref">Source: src/slskd/Users/API/Controllers/UsersController.cs, src/web/src/lib/shares.js. See <a href="data-model.html#directory">data-model.html#directory</a> and <a href="data-model.html#file">data-model.html#file</a>.</p>
 
 <h2 id="shares-api">Shares REST API</h2>

@@ -108,7 +108,7 @@
 <p class="src-ref">Source: src/slskd/Program.cs (AddJsonOptions); src/web/src/lib/{users,rooms,chat}.js</p>
 
 <h2 id="users">Users</h2>
-<p>The Users domain exposes read-only information about other peers on the network. Behind each call slskd asks the Soulseek server or the peer directly, caches the result, and (for status/statistics) keeps it fresh by "watching" the user server-side. Blacklisted usernames are treated as <span class="type">404 Not Found</span> by every <code>UsersController</code> action (and as a silent no-op by private messaging — see <a href="#ack">below</a>).</p>
+<p>The Users domain exposes read-only information about other peers on the network. Behind each call slskd asks the Soulseek server or the peer directly, caches the result, and (for status/statistics) keeps it fresh by "watching" the user server-side. Blacklisted usernames are treated as <span class="type">404 Not Found</span> by the <code>UsersController</code> actions that perform network operations (<code>info</code>, <code>status</code>, <code>endpoint</code>, <code>browse</code>, <code>directory</code>). The exception is <code>browse/status</code>, which only reflects <code>BrowseTracker</code> state and does not check the blacklist (it 404s solely when no browse is currently tracked). Private messaging treats a blacklisted recipient as a silent no-op — see <a href="#conversation-endpoints">below</a>.</p>
 
 <h3 id="user-models">User, Status, Statistics, Info</h3>
 <p>The composite <a href="data-model.html#user"><code>User</code></a> record aggregates the per-user data slskd caches. It is not returned directly by the user endpoints below (which return the individual <code>Info</code> / <code>Status</code> sub-objects), but it is what appears in the application <a href="#realtime">state</a> under <code>users[]</code>.</p>
@@ -198,7 +198,7 @@
 <p>Returns the peer's <a href="#user-models"><code>Status</code></a> (presence + privileged). Resolved from the server and cached. <span class="type">404</span> if offline/blacklisted.</p>
 
 <div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/users/{username}/endpoint</span><span class="auth"><span class="badge role any">Any</span></span></div>
-<p>Returns the peer's IP endpoint as an <code>IPEndPoint</code> — the address and listen port the server has on file for that user. Serialized through a custom <code>IPAddressConverter</code>. <span class="type">404</span> if offline/blacklisted.</p>
+<p>Returns the peer's IP endpoint as an <code>IPEndPoint</code> object (default object serialization yields camelCase <code>address</code>/<code>port</code> keys); the address value itself is written by the custom <code>IPAddressConverter</code> as a plain string. <span class="type">404</span> if offline/blacklisted.</p>
 <pre><code>// GET /api/v0/users/RJ/endpoint  →  200
 {
   "address": "203.0.113.7",

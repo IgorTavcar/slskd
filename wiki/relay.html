@@ -210,7 +210,7 @@
 <p>All routes are under <code>api/v{version}/relay</code> (API version <code>0</code> &rarr; <code>/api/v0/relay/...</code>). The <code>agent</code> endpoints control the local agent and are JWT-authenticated (operator-facing); the <code>controller/...</code> endpoints receive agent traffic and are API-key-authenticated. Every endpoint also enforces that the relay is enabled and the instance is in a compatible mode, returning <code>403 Forbidden</code> otherwise.</p>
 
 <div class="endpoint"><span class="badge put">PUT</span><span class="path">/api/v0/relay/agent</span><span class="auth"><span class="badge role admin">Administrator</span></span></div>
-<p>Starts the local relay client and connects to the configured controller. Valid only when this instance is in <code>Agent</code>/<code>Debug</code> mode. JWT policy. Returns <code>200 OK</code>. This is what the web UI's "connect" button calls.</p>
+<p>Starts the local relay client and connects to the configured controller. Valid only when this instance is in <code>Agent</code>/<code>Debug</code> mode. JWT policy. Returns <code>200 OK</code>. Invoked by the agent's operator UI / connect control.</p>
 
 <div class="endpoint"><span class="badge delete">DELETE</span><span class="path">/api/v0/relay/agent</span><span class="auth"><span class="badge role admin">Administrator</span></span></div>
 <p>Stops the local relay client and disconnects from the controller. <code>Agent</code>/<code>Debug</code> mode only. JWT policy. Returns <code>204 No Content</code>.</p>
@@ -349,7 +349,7 @@ shares:
 <tr><td><code>relay.controller.downloads</code></td><td>agent</td><td>bool, <code>false</code></td><td>Pull completed downloads from the controller. CLI <code>--controller-downloads</code>.</td></tr>
 </tbody>
 </table></div>
-<div class="note callout warn"><span class="label">Warn</span><p>When in <code>Agent</code> mode the instance's top-level <code>instance_name</code> must <strong>not</strong> be the default host name — validation rejects it. The instance name doubles as the PBKDF2 salt and the identity presented at <code>Login</code>, so it must exactly match the controller's <code>instance_name</code> for that agent.</p></div>
+<div class="note callout warn"><span class="label">Warn</span><p>When in <code>Agent</code> mode the instance's top-level <code>instance_name</code> must <strong>not</strong> be the reserved value <code>local</code> (<code>Program.LocalHostName</code>) — validation rejects it with: <code>Instance name must be something other than 'local' when operating in Relay Agent mode</code>. The instance name doubles as the PBKDF2 salt and the identity presented at <code>Login</code>, so it must exactly match the controller's <code>instance_name</code> for that agent.</p></div>
 <p class="src-ref">Source: src/slskd/Core/Options.cs (RelayOptions), docs/config.md</p>
 
 <h2 id="security">Security Recap</h2>

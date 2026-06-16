@@ -256,7 +256,7 @@
 <li><strong>JWT bearer token</strong> — obtained by logging in with the configured web username/password; presented as an <code>Authorization: Bearer &lt;token&gt;</code> header.</li>
 <li><strong>API key</strong> — a configured static key, presented in a request header; keys carry a role (e.g. <code>readonly</code>, <code>readwrite</code>) and may be scoped to an IP/CIDR.</li>
 </ul>
-<p>Endpoints are protected by role-based policies (<span class="badge role any">Any</span>, <span class="badge role readonly">ReadOnly</span>, <span class="badge role readwrite">ReadWrite</span>, <span class="badge role admin">Admin</span>). The default web credentials are <code>slskd</code> / <code>slskd</code> and must be changed for any exposed instance. See <a href="authentication.html">Authentication &amp; Security</a> for the full model, and note that this is entirely separate from the Soulseek <em>network</em> login (Surface A), which uses your Soulseek account credentials.</p>
+<p>Endpoints are protected by role-based policies (<span class="badge role any">Any</span>, <span class="badge role readonly">ReadOnly</span>, <span class="badge role readwrite">ReadWrite</span>, <span class="badge role">Guest</span>, <span class="badge role admin">Administrator</span>). The default web credentials are <code>slskd</code> / <code>slskd</code> and must be changed for any exposed instance. See <a href="authentication.html">Authentication &amp; Security</a> for the full model, and note that this is entirely separate from the Soulseek <em>network</em> login (Surface A), which uses your Soulseek account credentials.</p>
 <p class="src-ref">Source: src/slskd/Program.cs (AddAuthentication, JwtBearer, ApiKey policies), README.md</p>
 
 <h2 id="glossary">Glossary</h2>

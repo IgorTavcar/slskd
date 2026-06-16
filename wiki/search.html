@@ -104,8 +104,7 @@
 <tr><td><code>TimedOut</code></td><td><span class="type">16</span></td><td>Completed because the inter-response timeout (<code>searchTimeout</code>) elapsed. This is the normal, expected completion reason.</td></tr>
 <tr><td><code>ResponseLimitReached</code></td><td><span class="type">32</span></td><td>Completed because the number of accepted responses reached <code>responseLimit</code>.</td></tr>
 <tr><td><code>FileLimitReached</code></td><td><span class="type">64</span></td><td>Completed because the cumulative number of accepted files reached <code>fileLimit</code>.</td></tr>
-<tr><td><code>Errored</code></td><td><span class="type">128</span></td><td>Completed abnormally (exception during execution, e.g. the client was disconnected). slskd also sets this if it must finalize a search whose normal completion was never observed.</td></tr>
-<tr><td><code>Queued</code></td><td><span class="type">256</span></td><td>Defined by Soulseek.NET; not used by slskd's standard network-scope search flow.</td></tr>
+<tr><td><code>Errored</code></td><td><span class="type">128</span></td><td>Completed abnormally (exception during execution, e.g. the client was disconnected). slskd also sets this if it must finalize a search whose normal completion was never observed. This is the highest-valued flag — the enum ends here.</td></tr>
 </tbody>
 </table>
 </div>
@@ -130,7 +129,7 @@
 <p>slskd does not query peers directly. It hands the query to the central server, which injects it into the distributed peer tree; peers that find matches open a peer connection back to the searcher and deliver results. The mechanics are fully specified on the <a href="soulseek-protocol.html#search-delivery">Soulseek Wire Protocol</a> page; the essentials as they pertain to a slskd search:</p>
 <ol>
   <li><strong>Submit.</strong> slskd allocates a <span class="type">uint32</span> token (<code>Client.GetNextToken()</code>) and sends server message <strong>FileSearch (code&nbsp;26)</strong> <code>{ token, query }</code>. For non-network scopes the corresponding server message is used instead (see <a href="#scope">Search scope</a>).</li>
-  <li><strong>Propagate.</strong> The server forwards the request down the distributed tree as a <code>DistributedSearchRequest</code>. Each participating peer matches it against its own share index.</li>
+  <li><strong>Propagate.</strong> The server forwards the request down the distributed tree as a <code>DistribSearch</code> (distributed code&nbsp;3, also called <code>SearchRequest</code>; see <a href="soulseek-protocol.html#distributed-messages">distributed messages</a>). Each participating peer matches it against its own share index.</li>
   <li><strong>Reply.</strong> A peer with matches connects to the searcher over a peer connection and sends <strong>SearchResponse (code&nbsp;9)</strong> — a <strong>zlib-compressed</strong> payload carrying <code>username</code>, the echoed <code>token</code>, the matching <code>files[]</code>, a free-slot flag, average upload speed, queue length, and <code>lockedFiles[]</code>.</li>
   <li><strong>Correlate.</strong> Soulseek.NET matches the response token to the active search, applies the <a href="#options">acceptance filters</a>, and invokes slskd's response handler. There is no explicit "search finished" message on the wire — completion is determined locally by the inter-response timeout or a configured limit.</li>
 </ol>
@@ -200,14 +199,13 @@
   "maximumPeerQueueLength": 1000000,
   "minimumPeerUploadSpeed": 0
 }</code></pre>
-<p>Successful response — <code>200 OK</code> with the newly created <a href="#response-shape">Search record</a> (responses not yet populated):</p>
+<p>Successful response — <code>200 OK</code> with the newly created <a href="#response-shape">Search record</a> (responses not yet populated). Note <code>endedAt</code> is absent: it is still null at this point and null fields are omitted per the global <code>WhenWritingNull</code> policy (treat an absent key as null/not provided):</p>
 <pre><code>{
   "id": "8f2b9e4a-7c1d-4e2a-9f0b-1a2b3c4d5e6f",
   "searchText": "aphex twin selected ambient works",
   "token": 1733412096,
   "state": "InProgress",
   "startedAt": "2026-06-16T12:00:00.000Z",
-  "endedAt": null,
   "fileCount": 0,
   "lockedFileCount": 0,
   "responseCount": 0,
@@ -230,7 +228,7 @@
 
 <h3 id="rest-list">List searches</h3>
 <div class="endpoint"><span class="badge get">GET</span><span class="path">/api/v0/searches</span><span class="auth"><span class="badge role any">Any</span></span></div>
-<p>Returns an array of all active and completed search records, <strong>with responses always omitted</strong> (only counts and metadata). Use this for an index/history view.</p>
+<p>Returns an array of all active and completed search records, <strong>with response content always omitted</strong> (only counts and metadata). The list projection (<code>WithoutResponses()</code>) never assigns <code>Responses</code>, so it retains its default empty-list initializer — an empty array, not null, so it survives the <code>WhenWritingNull</code> policy and is present as <code>"responses": []</code>. Use this for an index/history view.</p>
 <pre><code>[
   {
     "id": "8f2b9e4a-7c1d-4e2a-9f0b-1a2b3c4d5e6f",
@@ -242,7 +240,8 @@
     "fileCount": 873,
     "lockedFileCount": 41,
     "responseCount": 64,
-    "isComplete": true
+    "isComplete": true,
+    "responses": []
   }
 ]</code></pre>
 
@@ -286,7 +285,7 @@
 </tbody>
 </table>
 </div>
-<div class="note callout"><span class="label">Streaming vs. fetching</span><p>The hub never streams the accumulated <code>responses</code> array on <code>UPDATE</code>/<code>CREATE</code>/<code>DELETE</code> — those are deliberately nulled to keep socket payloads small. To get full result content, a client either consumes individual <code>RESPONSE</code> events as they arrive, or (after seeing <code>UPDATE</code> with <code>isComplete: true</code>) fetches <code>GET /searches/{id}?includeResponses=true</code>. The <code>RESPONSE</code> event payload uses the Soulseek.NET <code>SearchResponse</code> shape (same fields as <a href="#response-shape">below</a>, minus slskd's added <code>code</code>/<code>isLocked</code> on files).</p></div>
+<div class="note callout"><span class="label">Streaming vs. fetching</span><p>The hub never streams the accumulated <code>responses</code> array on <code>UPDATE</code>/<code>CREATE</code>/<code>DELETE</code> — those are deliberately nulled to keep socket payloads small. To get full result content, a client either consumes individual <code>RESPONSE</code> events as they arrive, or (after seeing <code>UPDATE</code> with <code>isComplete: true</code>) fetches <code>GET /searches/{id}?includeResponses=true</code>. The <code>RESPONSE</code> event payload uses the Soulseek.NET <code>SearchResponse</code> shape (same fields as <a href="#response-shape">below</a>, minus slskd's added <code>isLocked</code> on files — the Soulseek.NET <code>File</code> already carries <code>code</code>).</p></div>
 <p class="src-ref">Source: src/slskd/Search/API/Hubs/SearchHub.cs (<code>SearchHubMethods</code>, <code>SearchHubExtensions</code>); broadcasts in src/slskd/Search/SearchService.cs</p>
 
 <h2 id="response-shape">Response &amp; file shape</h2>
@@ -311,7 +310,7 @@
 </div>
 
 <h3 id="file-fields">File object</h3>
-<p>Audio metadata fields are <strong>nullable</strong> — they are only present when the peer included file attributes. slskd adds two fields not present on the wire <code>File</code>: <code>code</code> (the directory/file code) and <code>isLocked</code> (set by slskd context, not deserialized from the peer). The bit-rate/length/etc. fields come from the peer's <a href="data-model.html#file">file attributes</a>.</p>
+<p>Audio metadata fields are <strong>nullable</strong> — they are only present when the peer included file attributes. <code>code</code> is the standard Soulseek.NET/wire <code>File</code> code field (mapped from <code>file.Code</code> in <code>FromSoulseekFile</code>; conventionally <code>1</code> for a regular file, as <a href="data-model.html#file">data-model.html#file</a> notes). The only field slskd adds that is <em>not</em> deserialized from the peer is <code>isLocked</code> (set by slskd context). The bit-rate/length/etc. fields come from the peer's <a href="data-model.html#file">file attributes</a>.</p>
 <div class="table-wrap">
 <table>
 <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
@@ -319,7 +318,7 @@
 <tr><td><code>filename</code></td><td><span class="type">string</span></td><td>Full path of the file on the peer (back-slash separated, Windows-style).</td></tr>
 <tr><td><code>size</code></td><td><span class="type">int64</span></td><td>File size in bytes.</td></tr>
 <tr><td><code>extension</code></td><td><span class="type">string</span></td><td>File extension (may be empty).</td></tr>
-<tr><td><code>code</code></td><td><span class="type">int32</span></td><td>The file's directory-listing code (typically 1). slskd-specific.</td></tr>
+<tr><td><code>code</code></td><td><span class="type">int32</span></td><td>The standard Soulseek.NET/wire <code>File</code> code field (conventionally <code>1</code> for a regular file); mapped from <code>file.Code</code>, not slskd-specific.</td></tr>
 <tr><td><code>bitRate</code></td><td><span class="type">int32?</span></td><td>Audio bit rate in kbps, if reported.</td></tr>
 <tr><td><code>length</code></td><td><span class="type">int32?</span></td><td>Duration in seconds, if reported.</td></tr>
 <tr><td><code>bitDepth</code></td><td><span class="type">int32?</span></td><td>Bit depth (e.g. 16, 24), if reported.</td></tr>
@@ -329,7 +328,7 @@
 </tbody>
 </table>
 </div>
-<p>A concrete <code>responses</code> fragment (as returned by <code>GET /searches/{id}?includeResponses=true</code> or <code>GET /searches/{id}/responses</code>):</p>
+<p>A concrete <code>responses</code> fragment (as returned by <code>GET /searches/{id}?includeResponses=true</code> or <code>GET /searches/{id}/responses</code>). Nullable audio fields that the peer did not report are <strong>absent</strong> rather than <code>null</code> — slskd serializes with the global <code>WhenWritingNull</code> policy, so an unreported <code>bitRate</code>/<code>bitDepth</code>/<code>isVariableBitRate</code> is omitted entirely (treat an absent key as not provided):</p>
 <pre><code>[
   {
     "username": "some_peer",
@@ -341,11 +340,9 @@
         "size": 31457280,
         "extension": "flac",
         "code": 1,
-        "bitRate": null,
         "length": 293,
         "bitDepth": 16,
         "sampleRate": 44100,
-        "isVariableBitRate": null,
         "isLocked": false
       },
       {
@@ -355,7 +352,6 @@
         "code": 1,
         "bitRate": 320,
         "length": 228,
-        "bitDepth": null,
         "sampleRate": 44100,
         "isVariableBitRate": false,
         "isLocked": false
@@ -415,7 +411,7 @@
   <li><strong>Per-file predicate (short-circuits to drop):</strong> a file is removed if any of: <code>isCBR</code> and the file is VBR or unknown; <code>isVBR</code> and the file is CBR or unknown; <code>isLossless</code> and it lacks sampleRate or bitDepth; <code>isLossy</code> and it has sampleRate or bitDepth; <code>bitRate &lt; minBitRate</code>; <code>bitDepth &lt; minBitDepth</code>; <code>size &lt; minFileSize</code>; <code>length &lt; minLength</code>; not all include terms are substrings of the filename; or any exclude term is a substring of the filename.</li>
   <li>Both <code>files</code> and <code>lockedFiles</code> are filtered independently, and the response's <code>fileCount</code>/<code>lockedFileCount</code> are recomputed from the filtered arrays.</li>
 </ul>
-<div class="note callout"><span class="label">Comparison caveat</span><p>The numeric file fields are nullable. In the JS predicate a <code>null</code> compared with <code>&lt;</code> a positive minimum (e.g. <code>null &lt; 320</code>) evaluates to <code>false</code>, so a file with an unreported <code>bitRate</code> is <strong>not</strong> dropped by <code>minbr</code> — only files that report a value below the threshold are removed. This is observed behaviour of the reference implementation, not a documented guarantee.</p></div>
+<div class="note callout"><span class="label">Comparison caveat</span><p>The numeric audio file fields are nullable, but in practice an unreported field arrives with its <strong>key omitted entirely</strong>: slskd serializes with <code>DefaultIgnoreCondition = WhenWritingNull</code>, so a null <code>bitRate</code> is left out of the JSON rather than emitted as <code>null</code>. In the JS predicate the destructured value is therefore <code>undefined</code>, and <code>undefined &lt; N</code> evaluates to <code>false</code> for any <code>N</code> — so <code>if (bitRate &lt; minBitRate) return false</code> does not drop a file whose <code>bitRate</code> was never reported. (Note this relies on the key being absent: an explicit <code>null</code> would coerce to <code>0</code>, and <code>null &lt; 320</code> is in fact <code>true</code>, which would drop the file.) Only files that report a value below the threshold are removed. This is observed behaviour of the reference implementation, not a documented guarantee.</p></div>
 <p>Example combining server exclusions and client filters in one box:</p>
 <pre><code>aphex twin minbr:320 islossless minfif:5 -live -remaster</code></pre>
 <p class="src-ref">Source: src/web/src/lib/searches.js (<code>parseFiltersFromString</code>, <code>filterResponse</code>)</p>

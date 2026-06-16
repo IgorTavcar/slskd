@@ -78,7 +78,7 @@
 </ul></nav>
 
 <h2 id="entity">The Transfer entity</h2>
-<p>Every download and upload is a single <code>Transfer</code> record. The same class serves both directions; the <code>direction</code> field distinguishes them. Downloads and uploads are stored and queried separately (different services and tables) but share this shape. The DTO is serialized as camelCase JSON.</p>
+<p>Every download and upload is a single <code>Transfer</code> record. The same class serves both directions; the <code>direction</code> field distinguishes them. Downloads and uploads are stored in a single <code>Transfers</code> table and distinguished by the <code>direction</code> column, but are managed by separate services (<code>DownloadService</code> / <code>UploadService</code>) that each filter that table by direction. The DTO is serialized as camelCase JSON.</p>
 
 <div class="table-wrap"><table>
 <thead><tr><th>Field</th><th>Type</th><th>Direction</th><th>Description</th></tr></thead>
@@ -174,10 +174,13 @@
                                                            ├──&gt; Completed,Errored    (272)
                                                            └──&gt; Completed,Rejected   (528)
 
-  Requested ──&gt; Queued,Locally ──&gt; Initializing ──&gt; InProgress ──&gt; Completed,Succeeded   (48)
-  (upload)        (2050)                                            └──&gt; Completed,Aborted (1040)
-                  (waits for an upload slot in the
-                   user's group; see Upload queue)</code></pre>
+  Queued,Locally ──&gt; Initializing ──&gt; InProgress ──&gt; Completed,Succeeded   (48)
+  (upload)              (4)              (8)        ├──&gt; Completed,Aborted   (1040)
+     (2050)                                         ├──&gt; Completed,Cancelled (80)
+  (inserted directly at Queued,Locally;             ├──&gt; Completed,TimedOut  (144)
+   never passes through Requested. Waits            └──&gt; Completed,Errored   (272)
+   for an upload slot in the user's group;
+   see Upload queue)</code></pre>
 
 <div class="tip callout"><span class="label">Client logic</span><p>The web client derives three predicates from the state string (<code>src/web/src/lib/transfers.js</code>) — these are the canonical rules a client should reproduce:</p>
 <ul>
@@ -221,7 +224,7 @@
 <li>On failure, retries up to the configured attempt limit with exponential-ish backoff (downloads only), resuming or overwriting the partial file per <a href="#strategies"><code>RetryPartialStrategy</code></a>.</li>
 </ol>
 
-<div class="note callout"><span class="label">Concurrency limit</span><p>Both download-enqueue endpoints share a process-wide semaphore of <strong>1 concurrent operation</strong> (a <code>SemaphoreSlim(2,2)</code> entered with <code>Wait(0)</code> per request — only one in-flight at a time effectively, because each request holds it for the duration). A second concurrent enqueue returns <span class="type">429</span> <code>"Only one concurrent operation is permitted. Wait until the previous request completes"</code>.</p></div>
+<div class="note callout"><span class="label">Concurrency limit</span><p>Both download-enqueue endpoints — the obsolete single-user <code>EnqueueAsync</code> and the batch <code>EnqueueBatchAsync</code> — share a process-wide <code>SemaphoreSlim(2, 2)</code> entered with <code>Wait(0)</code> per request, so <strong>up to two enqueue operations may run concurrently</strong>. A <em>third</em> concurrent request, arriving while both permits are held, returns <span class="type">429</span> <code>"Only one concurrent operation is permitted. Wait until the previous request completes"</code>. Note the returned message text still says "Only one", but the configured capacity is two.</p></div>
 
 <h3 id="enqueue-single">Single-user enqueue (obsolete)</h3>
 <div class="endpoint"><span class="badge post">POST</span><span class="path">/api/v0/transfers/downloads/{username}</span><span class="auth"><span class="badge role any">Any</span></span></div>
@@ -281,7 +284,7 @@ Content-Type: application/json
 <p>Returns a single <a href="#batches">Batch</a> with its included transfers. <span class="type">400</span> if not a GUID; <span class="type">404</span> if not found.</p>
 
 <h3 id="shape">Grouped response shape</h3>
-<p>The list endpoints do not return a flat array of transfers; they group by username and then by directory. The <code>directory</code> key is computed from <code>filename</code>'s remote directory.</p>
+<p>The list endpoints do not return a flat array of transfers; they group by username and then by directory. The <code>directory</code> key is computed from <code>filename</code>'s remote directory. The API serializes with <code>DefaultIgnoreCondition = WhenWritingNull</code>, so null properties (e.g. <code>placeInQueue</code>, <code>enqueuedAt</code>/<code>startedAt</code> before they are set, <code>exception</code>) are <strong>omitted</strong> from the payload rather than emitted as <code>null</code>.</p>
 <pre><code>// GET /api/v0/transfers/downloads  →  UserResponse[]
 [
   {
@@ -296,8 +299,8 @@ Content-Type: application/json
             "size": 31457280, "state": "InProgress",
             "bytesTransferred": 12000000, "bytesRemaining": 19457280,
             "percentComplete": 38.1, "averageSpeed": 1048576,
-            "placeInQueue": null, "enqueuedAt": "…", "startedAt": "…" }
-          /* … */
+            "enqueuedAt": "2026-06-16T12:00:00Z", "startedAt": "2026-06-16T12:00:05Z" }
+          /* placeInQueue, nextAttemptAt, etc. are omitted while null */
         ]
       }
     ]
@@ -559,7 +562,7 @@ Content-Type: application/json
 <div class="msg-card"><div class="msg-head"><span class="msg-code">Code 41</span> <strong>TransferResponse</strong></div>
 <p>Reply to a <code>TransferRequest</code>. Payload: the <code>token</code>, an <code>allowed</code> flag, and either the <code>fileSize</code> (when allowed) or a rejection <code>message</code> (e.g. <code>"Queued"</code>, <code>"File not shared."</code>). A <code>"Queued"</code> response maps to the <code>Queued | Remotely</code> state.</p></div>
 
-<div class="msg-card"><div class="msg-head"><span class="msg-code">Code 44</span> <strong>PlaceInQueueRequest</strong> &middot; <span class="msg-code">Code 44</span> <strong>PlaceInQueueResponse</strong></div>
+<div class="msg-card"><div class="msg-head"><span class="msg-code">Code 51</span> <strong>PlaceInQueueRequest</strong> &middot; <span class="msg-code">Code 44</span> <strong>PlaceInQueueResponse</strong></div>
 <p>The downloader requests its current place; the uploader replies with the <code>filename</code> and an integer <code>place</code>. This is exactly what <code>GET /downloads/{username}/{id}/position</code> triggers, and what the upload queue's position estimator answers when slskd is the uploader.</p></div>
 
 <div class="msg-card"><div class="msg-head"><strong>File connection ('F')</strong></div>

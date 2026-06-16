@@ -169,6 +169,7 @@ Content-Type: application/json
 <tr><td><span class="type">400</span></td><td>Body missing, or username/password missing/blank.</td></tr>
 <tr><td><span class="type">401</span></td><td>Credentials did not match.</td></tr>
 <tr><td><span class="type">403</span></td><td>Returned (<code>Forbid</code>) when the daemon runs in <strong>headless</strong> mode — the web UI/login is disabled.</td></tr>
+<tr><td><span class="type">500</span></td><td>Unexpected server error (declared via <code>[ProducesResponseType(typeof(string), 500)]</code>; body is a string).</td></tr>
 </tbody>
 </table></div>
 
